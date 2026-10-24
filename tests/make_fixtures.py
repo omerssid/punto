@@ -283,6 +283,28 @@ def main():
     write_las(os.path.join(OUT, "helix_8bitcolor.las"), pts, version=(1, 2), point_format=3,
               color16=False)
 
+    # Compress the LAS fixtures with laszip itself, so the LAZ tests run
+    # against data written by the reference implementation. Built by cmake
+    # only when liblaszip-dev is present.
+    make_laz = None
+    for candidate in ("build/pcv_make_laz", "../build/pcv_make_laz",
+                      os.path.join(HERE, "..", "build", "pcv_make_laz")):
+        if os.path.exists(candidate):
+            make_laz = candidate
+            break
+    if make_laz is None:
+        print("  note: pcv_make_laz not built; skipping LAZ fixtures "
+              "(install liblaszip-dev and re-run cmake)", file=sys.stderr)
+    else:
+        for stem in ("helix_12_fmt3", "helix_14_fmt7", "helix_12_fmt0"):
+            src_las = os.path.join(OUT, stem + ".las")
+            dst_laz = os.path.join(OUT, stem + ".laz")
+            r = subprocess.run([make_laz, src_las, dst_laz],
+                               capture_output=True, text=True, timeout=120)
+            if r.returncode != 0:
+                print(f"  warning: LAZ conversion failed: {r.stderr.strip()[:200]}",
+                      file=sys.stderr)
+
     # Let PCL produce the compressed variant, so we are decoding a stream
     # written by the reference implementation rather than by ourselves.
     src = os.path.join(OUT, "helix_binary.pcd")

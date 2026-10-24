@@ -434,6 +434,53 @@ void testLasColorDepthHeuristic() {
   CHECK_EQ(mismatchNarrow, std::size_t{0});
 }
 
+// LAZ must produce exactly the cloud its LAS original does. The reader
+// serialises each decompressed point back into the on-disk record layout
+// so both flow through the same decode plan; this is the test that keeps
+// those two paths from drifting.
+void testLazMatchesLas() {
+  beginTest("LAZ decodes identically to the LAS it was compressed from");
+  const char* pairs[][2] = {
+      {"helix_12_fmt3.las", "helix_12_fmt3.laz"},
+      {"helix_14_fmt7.las", "helix_14_fmt7.laz"},
+      {"helix_12_fmt0.las", "helix_12_fmt0.laz"},
+  };
+
+  for (const auto& pair : pairs) {
+    if (!std::filesystem::exists(fixtureDir() / pair[1])) {
+      std::printf("  skipping %s (no laszip at build time)\n", pair[1]);
+      continue;
+    }
+    const PointCloud las = load(pair[0]);
+    const PointCloud laz = load(pair[1]);
+    if (las.empty() || laz.empty()) continue;
+
+    // Positions came from identical int32s through identical scale and
+    // offset, so this must match bit for bit.
+    expectSameCloud(las, laz, 0.0, pair[1]);
+
+    CHECK_EQ(las.hasColors(), laz.hasColors());
+    if (las.hasColors() && laz.hasColors()) {
+      std::size_t mismatch = 0;
+      for (std::size_t i = 0; i < las.size(); ++i)
+        if (las.colors[i] != laz.colors[i]) ++mismatch;
+      CHECK_EQ(mismatch, std::size_t{0});
+    }
+  }
+}
+
+void testLazFormatName() {
+  beginTest("LAZ reports itself as compressed");
+  if (!std::filesystem::exists(fixtureDir() / "helix_12_fmt3.laz")) return;
+  const PointCloud laz = load("helix_12_fmt3.laz");
+  if (laz.empty()) return;
+  CHECK(laz.formatName.find("LAZ") != std::string::npos);
+  // Detection is by the compression bits in the header's format byte, not
+  // by the extension, so a .laz named .las still reads correctly.
+  CHECK_EQ(static_cast<int>(detectFormat((fixtureDir() / "helix_12_fmt3.laz").string())),
+           static_cast<int>(CloudFormat::Las));
+}
+
 void testGreyscaleDetection() {
   beginTest("greyscale colour is detected per point, not from channel statistics");
   const PointCloud grey = load("helix_greyscale.pcd");
@@ -481,6 +528,8 @@ int main() {
   testPlyMatchesPcd();
   testLas();
   testLasColorDepthHeuristic();
+  testLazMatchesLas();
+  testLazFormatName();
   testGreyscaleDetection();
   testStatsAgainstKnownValues();
   testLzfEdgeCases();

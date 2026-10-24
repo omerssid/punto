@@ -39,6 +39,7 @@ add_library(pcv_core STATIC
   src/io/pcd_loader.cpp
   src/io/ply_loader.cpp
   src/io/las_loader.cpp
+  src/io/laz_decode.cpp
   src/scene/chunk_builder.cpp
   src/scene/radix_sort.cpp
   src/scene/ram_chunk_source.cpp
@@ -57,6 +58,7 @@ if(LASZIP_INCLUDE_DIR AND LASZIP_LIBRARY)
   target_include_directories(pcv_core PRIVATE ${LASZIP_INCLUDE_DIR})
   target_link_libraries(pcv_core PRIVATE ${LASZIP_LIBRARY})
   target_compile_definitions(pcv_core PRIVATE PCV_HAVE_LASZIP=1)
+  set(PCV_LASZIP_FOUND TRUE)
 else()
   message(STATUS "laszip not found: .laz files will be rejected "
                  "(install liblaszip-dev to enable)")
@@ -121,6 +123,14 @@ target_link_libraries(pcd_viewer PRIVATE pcv_gpu pcv_imgui)
 
 add_executable(pcv_probe tools/pcv_probe.cpp)
 target_link_libraries(pcv_probe PRIVATE pcv_core)
+
+# Compresses a LAS fixture using laszip itself, so the LAZ tests run against
+# data produced by the reference implementation.
+if(PCV_LASZIP_FOUND)
+  add_executable(pcv_make_laz tools/make_laz.cpp)
+  target_include_directories(pcv_make_laz PRIVATE ${LASZIP_INCLUDE_DIR})
+  target_link_libraries(pcv_make_laz PRIVATE ${LASZIP_LIBRARY} pcv_flags)
+endif()
 
 # ---------------------------------------------------------------- tests
 

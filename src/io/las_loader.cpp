@@ -17,6 +17,7 @@
 #include "core/log.hpp"
 #include "core/parallel.hpp"
 #include "io/cloud_builder.hpp"
+#include "io/laz_decode.hpp"
 #include "io/mapped_file.hpp"
 
 namespace pcv {
@@ -202,16 +203,13 @@ LoadResult loadLas(const std::string& path, const LoadOptions& options, PointClo
   LasHeader header;
   if (!parseHeader(file, header, error)) return LoadResult::failure(std::move(error));
   out.timing.headerMs = headerTimer.elapsedMs();
+  // Recorded before the mapping may be released for the LAZ path.
+  const std::uint64_t fileBytes = file.size();
 
-  if (header.compressed) {
-#ifdef PCV_HAVE_LASZIP
-    return LoadResult::failure(
-        "LAZ: this build links laszip but the decompression path is not wired up yet");
-#else
+  if (header.compressed && !lazSupported()) {
     return LoadResult::failure(
         "LAZ files are compressed and this build has no laszip. Install "
-        "liblaszip-dev and rebuild, or convert with: laszip -i " + path + " -o out.las");
-#endif
+        "liblaszip-dev and re-run cmake.");
   }
 
   LasLayout layout;
@@ -221,24 +219,30 @@ LoadResult loadLas(const std::string& path, const LoadOptions& options, PointClo
   // layoutFields computes the natural packing; LAS records match it for the
   // fields above, and any extra bytes are covered by the declared stride.
   const std::size_t naturalStride = layoutFields(layout.fields);
-  const std::size_t stride = header.pointRecordLength;
-  if (stride < naturalStride) {
-    return LoadResult::failure("LAS: record length " + std::to_string(stride) +
-                               " is shorter than format " +
-                               std::to_string(header.pointFormat) + " requires (" +
-                               std::to_string(naturalStride) + ")");
-  }
-  if (stride > naturalStride)
-    result.warnings.push_back("LAS: records carry " + std::to_string(stride - naturalStride) +
-                              " extra bytes (waveform or vendor data), ignored");
-
   std::size_t pointCount = static_cast<std::size_t>(header.pointCount);
-  const std::size_t available = file.size() - header.pointDataOffset;
-  if (available < stride * pointCount) {
-    result.warnings.push_back("LAS: point block is truncated; reading " +
-                              std::to_string(available / stride) + " of " +
-                              std::to_string(pointCount) + " points");
-    pointCount = available / stride;
+
+  // Decompressed records are written in the natural packing, with none of
+  // the vendor padding an uncompressed file may carry.
+  std::size_t stride = header.compressed ? naturalStride : header.pointRecordLength;
+
+  if (!header.compressed) {
+    if (stride < naturalStride) {
+      return LoadResult::failure("LAS: record length " + std::to_string(stride) +
+                                 " is shorter than format " +
+                                 std::to_string(header.pointFormat) + " requires (" +
+                                 std::to_string(naturalStride) + ")");
+    }
+    if (stride > naturalStride)
+      result.warnings.push_back("LAS: records carry " + std::to_string(stride - naturalStride) +
+                                " extra bytes (waveform or vendor data), ignored");
+
+    const std::size_t available = file.size() - header.pointDataOffset;
+    if (available < stride * pointCount) {
+      result.warnings.push_back("LAS: point block is truncated; reading " +
+                                std::to_string(available / stride) + " of " +
+                                std::to_string(pointCount) + " points");
+      pointCount = available / stride;
+    }
   }
   if (pointCount == 0) return LoadResult::failure("LAS: no complete point records");
 
@@ -258,7 +262,30 @@ LoadResult loadLas(const std::string& path, const LoadOptions& options, PointClo
     e.offset = header.offset[axis];
   }
 
-  const auto* base = reinterpret_cast<const std::byte*>(file.chars() + header.pointDataOffset);
+  // Decompressed LAZ records live here; for LAS the mapping is read in
+  // place and this stays empty.
+  std::vector<std::byte> decompressed;
+  const std::byte* base = nullptr;
+
+  Stopwatch decodeTimer;
+  if (header.compressed) {
+    // The mapping was only needed for the header.
+    file.close();
+    std::string lazError;
+    if (!decodeLazPoints(path, layout.fields, stride, header.pointFormat, pointCount,
+                         options.workers, stop, decompressed, result.warnings, lazError)) {
+      if (lazError == "load cancelled") {
+        result.cancelled = true;
+        result.error = lazError;
+        return result;
+      }
+      return LoadResult::failure(std::move(lazError));
+    }
+    base = decompressed.data();
+  } else {
+    base = reinterpret_cast<const std::byte*>(file.chars() + header.pointDataOffset);
+    file.adviseSequential(header.pointDataOffset, pointCount * stride);
+  }
 
   if (layout.hasColor) {
     std::size_t redOffset = 0;
@@ -280,15 +307,12 @@ LoadResult loadLas(const std::string& path, const LoadOptions& options, PointClo
   }
 
   out.sourcePath = path;
-  out.sourceBytes = file.size();
-  out.formatName = std::format("LAS {}.{} (format {})", header.versionMajor, header.versionMinor,
-                               header.pointFormat);
+  out.sourceBytes = fileBytes;
+  out.formatName = std::format("{} {}.{} (format {})", header.compressed ? "LAZ" : "LAS",
+                               header.versionMajor, header.versionMinor, header.pointFormat);
   out.width = static_cast<std::uint32_t>(pointCount);
   out.height = 1;
 
-  file.adviseSequential(header.pointDataOffset, pointCount * stride);
-
-  Stopwatch decodeTimer;
   allocateCloud(out, plan, pointCount, options);
   out.origin = chooseOrigin(plan, base, pointCount);
 
