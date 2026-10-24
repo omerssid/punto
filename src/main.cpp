@@ -25,6 +25,7 @@ void usage() {
       "  --no-vsync                uncap the frame rate\n"
       "  --screenshot PATH         render one frame to a PNG and exit\n"
       "  --benchmark [N]           time N frames of a full orbit and exit\n"
+      "  --resize-stress [N]       sweep the viewport size and report reallocations\n"
       "  --nav orbit|fly|top       initial navigation mode\n"
       "  --view NAME               top|bottom|+x|-x|+y|-y|iso\n"
       "  --yaw D --pitch D         initial camera angles, degrees\n"
@@ -182,6 +183,12 @@ int main(int argc, char** argv) {
     }
     if (arg == "--point-scale" && i + 1 < argc) {
       options.render.pointScale = static_cast<float>(std::atof(argv[++i]));
+      continue;
+    }
+    if (arg == "--resize-stress") {
+      options.resizeStress = true;
+      if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9')
+        options.resizeStressFrames = std::atoi(argv[++i]);
       continue;
     }
     if (arg == "--benchmark") {

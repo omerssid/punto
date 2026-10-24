@@ -1,5 +1,6 @@
 #include "gpu/gl.hpp"
 
+#include <cstdlib>
 #include <cstring>
 
 #include "core/log.hpp"
@@ -69,10 +70,28 @@ void installGlDebugCallback() {
     return;
   }
   glEnable(GL_DEBUG_OUTPUT);
-  // Synchronous so the reported call stack is the one that caused it.
-  glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
   glDebugMessageCallback(debugCallback, nullptr);
   glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
+
+  // Synchronous debug output makes the driver finish and report before
+  // returning from every call that produces a message, which is what makes
+  // a reported error point at the call that caused it. It also serialises
+  // the pipeline, so it is confined to debug builds and to an explicit
+  // opt-in -- having it on in a release build turns a slow frame into a
+  // stalled one.
+#ifndef NDEBUG
+  constexpr bool kSynchronousByDefault = true;
+#else
+  constexpr bool kSynchronousByDefault = false;
+#endif
+  const char* env = std::getenv("PCV_GL_SYNC_DEBUG");
+  const bool synchronous = env != nullptr ? (env[0] == '1') : kSynchronousByDefault;
+  if (synchronous) {
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    logDebug("synchronous GL debug output enabled (slow; unset PCV_GL_SYNC_DEBUG to disable)");
+  } else {
+    glDisable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+  }
 }
 
 void checkGlError(const char* where) {

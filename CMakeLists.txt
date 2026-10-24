@@ -110,6 +110,22 @@ target_link_libraries(pcv_gpu PUBLIC pcv_core GLEW::GLEW OpenGL::GL ${PCV_GLFW})
 target_compile_definitions(pcv_gpu PRIVATE
   PCV_SOURCE_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 
+# XRandR lets the viewer see how displays are actually driven, so it can
+# avoid forcing render offload onto a reverse-PRIME setup where that makes
+# things far worse. Optional: without it, auto simply always offloads.
+find_path(XRANDR_INCLUDE_DIR X11/extensions/Xrandr.h)
+find_library(XRANDR_LIBRARY NAMES Xrandr)
+# Xrandr's own calls need Xlib for the display connection.
+find_library(X11_LIBRARY NAMES X11)
+if(NOT X11_LIBRARY)
+  set(XRANDR_INCLUDE_DIR "")
+endif()
+if(XRANDR_INCLUDE_DIR AND XRANDR_LIBRARY)
+  message(STATUS "Xrandr found: GPU/display topology detection enabled")
+else()
+  message(STATUS "Xrandr not found: --gpu auto will always prefer the discrete GPU")
+endif()
+
 add_executable(pcd_viewer
   src/main.cpp
   src/app/viewer.cpp
@@ -118,6 +134,11 @@ add_executable(pcd_viewer
 )
 target_include_directories(pcd_viewer PRIVATE third_party/stb)
 target_link_libraries(pcd_viewer PRIVATE pcv_gpu pcv_imgui)
+if(XRANDR_INCLUDE_DIR AND XRANDR_LIBRARY)
+  target_include_directories(pcd_viewer PRIVATE ${XRANDR_INCLUDE_DIR})
+  target_link_libraries(pcd_viewer PRIVATE ${XRANDR_LIBRARY} ${X11_LIBRARY})
+  target_compile_definitions(pcd_viewer PRIVATE PCV_HAVE_XRANDR=1)
+endif()
 
 # ---------------------------------------------------------------- tools
 

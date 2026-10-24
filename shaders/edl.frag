@@ -18,6 +18,9 @@ uniform sampler2D uColor;
 uniform sampler2D uViewDepth;   // linear eye distance; 0 means background
 
 uniform vec2 uTexelSize;
+// The colour and depth targets are allocated larger than the viewport and
+// reused across resizes, so only this fraction of them holds the frame.
+uniform vec2 uUvScale;
 uniform float uStrength;
 uniform float uRadius;          // sampling radius in pixels
 uniform vec3 uBackground;
@@ -34,8 +37,9 @@ const vec2 kOffsets[8] = vec2[8](
 );
 
 void main() {
-  vec3 color = texture(uColor, vUv).rgb;
-  float centre = texture(uViewDepth, vUv).r;
+  vec2 uv = vUv * uUvScale;
+  vec3 color = texture(uColor, uv).rgb;
+  float centre = texture(uViewDepth, uv).r;
 
   // Nothing was drawn here.
   if (centre <= 0.0) {
@@ -59,8 +63,10 @@ void main() {
   float contributors = 0.0;
 
   for (int i = 0; i < 8; ++i) {
-    vec2 uv = vUv + kOffsets[i] * uTexelSize * uRadius;
-    float neighbour = texture(uViewDepth, uv).r;
+    // Clamped to the live sub-rectangle: sampling past it would read
+    // stale pixels left over from a previous, larger frame.
+    vec2 sampleUv = clamp(uv + kOffsets[i] * uTexelSize * uRadius, vec2(0.0), uUvScale);
+    float neighbour = texture(uViewDepth, sampleUv).r;
     // Background neighbours are skipped rather than treated as infinitely
     // far: counting them would ring a dark halo around every silhouette.
     if (neighbour <= 0.0) continue;

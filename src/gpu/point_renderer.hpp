@@ -116,6 +116,9 @@ class PointRenderer {
   bool reloadShaders(std::string& error);
 
   const RenderStats& stats() const { return stats_; }
+  // How many times the offscreen targets have been reallocated. Should
+  // stay near-constant while a window is resized.
+  std::uint64_t framebufferAllocations() const { return framebufferAllocations_; }
   bool supportsIndirectCount() const { return hasIndirectCount_; }
 
  private:
@@ -159,8 +162,18 @@ class PointRenderer {
   GlTexture colorTex_;
   GlTexture viewDepthTex_;
   GlTexture depthTex_;
+  // Allocated texture size, which is the viewport size rounded up to a
+  // granularity. Reallocating on every pixel of change meant a maximise
+  // animation -- or just dragging a panel edge -- destroyed and recreated
+  // three large textures every frame. At 2560x1440 that is ~60 MB of
+  // texture churn per frame, which is enough to wedge a driver that is
+  // also copying each frame across PCIe.
   int fboWidth_ = 0;
   int fboHeight_ = 0;
+  // The sub-rectangle of those textures actually rendered into.
+  int viewportWidth_ = 0;
+  int viewportHeight_ = 0;
+  std::uint64_t framebufferAllocations_ = 0;
 
   GLuint pickFbo_ = 0;
   GlTexture pickTex_;

@@ -34,7 +34,7 @@ Viewer* Viewer::fromWindow(GLFWwindow* window) {
   return static_cast<Viewer*>(glfwGetWindowUserPointer(window));
 }
 
-bool Viewer::createWindow(const ViewerOptions& options) {
+bool Viewer::createWindow(const ViewerOptions& options, const PrimeTopology& topology) {
   glfwSetErrorCallback(glfwErrorCallback);
   if (glfwInit() != GLFW_TRUE) {
     logError("glfwInit failed");
@@ -78,7 +78,10 @@ bool Viewer::createWindow(const ViewerOptions& options) {
   device_ = queryGlDevice();
   logInfo("GPU: {} | {} | GLSL {}", device_.renderer, device_.version, device_.glslVersion);
   if (device_.totalVramMB > 0) logInfo("VRAM: {} MB", device_.totalVramMB);
-  if (!device_.isDiscrete)
+  // Only worth mentioning when the discrete GPU was actually available and
+  // declined; saying it on a reverse-PRIME setup contradicts the message
+  // explaining why offload was skipped.
+  if (!device_.isDiscrete && !topology.reversePrimeActive && options.gpu != GpuPreference::Integrated)
     logWarn("rendering on an integrated GPU; pass --gpu nvidia to force the discrete one");
   if (!device_.hasShaderDrawParameters) {
     logError("GL_ARB_shader_draw_parameters is required but unavailable");
@@ -553,9 +556,42 @@ void Viewer::runBenchmark(int frames) {
           s.visibleChunks, s.totalChunks);
 }
 
+void Viewer::runResizeStress(int frames) {
+  logInfo("resize stress: {} frames sweeping the viewport size", frames);
+  const std::uint64_t before = renderer_.framebufferAllocations();
+
+  const int baseWidth = width_;
+  const int baseHeight = height_;
+  int minWidth = baseWidth, maxWidth = 0;
+
+  for (int i = 0; i < frames; ++i) {
+    // A smooth sweep from a quarter size up to full and back, which is
+    // what a maximise animation and a panel drag both look like.
+    const double phase = static_cast<double>(i) / frames * 2.0 * kPi;
+    const double t = 0.25 + 0.75 * (0.5 - 0.5 * std::cos(phase));
+    width_ = std::max(64, static_cast<int>(baseWidth * t));
+    height_ = std::max(64, static_cast<int>(baseHeight * t));
+    minWidth = std::min(minWidth, width_);
+    maxWidth = std::max(maxWidth, width_);
+
+    renderFrame();
+    glFinish();
+    glfwSwapBuffers(window_);
+    glfwPollEvents();
+  }
+
+  width_ = baseWidth;
+  height_ = baseHeight;
+  const std::uint64_t allocations = renderer_.framebufferAllocations() - before;
+  logInfo("viewport swept {} .. {} px wide over {} frames", minWidth, maxWidth, frames);
+  logInfo("offscreen targets reallocated {} times ({:.2f} per frame)", allocations,
+          static_cast<double>(allocations) / std::max(1, frames));
+}
+
 int Viewer::run(const ViewerOptions& options) {
-  applyGpuPreference(options.gpu);
-  if (!createWindow(options)) return 1;
+  const PrimeTopology topology = detectPrimeTopology();
+  applyGpuPreference(options.gpu, topology);
+  if (!createWindow(options, topology)) return 1;
 
   std::string error;
   if (!renderer_.initialize(error)) {
@@ -568,7 +604,7 @@ int Viewer::run(const ViewerOptions& options) {
   }
   // The benchmark measures the renderer, so it runs without the UI.
   // Screenshots keep it, which is how the panels get verified.
-  const bool headless = options.benchmark;
+  const bool headless = options.benchmark || options.resizeStress;
   if (!headless && !ui_.initialize(window_, error)) {
     logError("UI init failed: {}", error);
     return 1;
@@ -638,6 +674,11 @@ int Viewer::run(const ViewerOptions& options) {
     glFinish();
     logFrameStats();
     return saveScreenshot(options.screenshotPath) ? 0 : 1;
+  }
+
+  if (options.resizeStress) {
+    runResizeStress(options.resizeStressFrames);
+    return 0;
   }
 
   if (options.benchmark) {

@@ -34,6 +34,13 @@ struct ViewerOptions {
   bool benchmark = false;
   int benchmarkFrames = 300;
 
+  // Sweep the viewport through many sizes, as a maximise animation or a
+  // panel drag does, and report how often the offscreen targets had to be
+  // reallocated. Reallocating three large textures every frame is what
+  // turned a slow resize into a stalled compositor.
+  bool resizeStress = false;
+  int resizeStressFrames = 240;
+
   // Initial view, mainly for scripted screenshots and benchmarks.
   NavMode nav = NavMode::Orbit;
   bool haveYaw = false;
@@ -80,7 +87,7 @@ class Viewer {
   int run(const ViewerOptions& options);
 
  private:
-  bool createWindow(const ViewerOptions& options);
+  bool createWindow(const ViewerOptions& options, const PrimeTopology& topology);
   void destroyWindow();
   bool openFile(const std::string& path);
 
@@ -88,6 +95,7 @@ class Viewer {
   void renderFrame();
   bool saveScreenshot(const std::string& path);
   void runBenchmark(int frames);
+  void runResizeStress(int frames);
   void logFrameStats();
 
   // GLFW callbacks dispatch into these.

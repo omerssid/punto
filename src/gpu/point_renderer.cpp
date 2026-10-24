@@ -15,6 +15,17 @@ constexpr GLuint kCullGroupSize = 64;
 // view. Large enough to catch a point whose centre is a few pixels off.
 constexpr int kPickRegion = 17;
 
+// Offscreen targets are allocated in multiples of this, so a resize only
+// reallocates when it crosses a boundary rather than on every pixel.
+constexpr int kFramebufferGranularity = 256;
+
+// A hard ceiling, in case a window manager ever reports something absurd.
+constexpr int kMaxFramebufferDimension = 16384;
+
+int roundUpTo(int value, int multiple) {
+  return ((value + multiple - 1) / multiple) * multiple;
+}
+
 std::uint64_t alignUp(std::uint64_t v, std::uint64_t a) { return (v + a - 1) / a * a; }
 
 }  // namespace
@@ -239,17 +250,30 @@ void PointRenderer::setScalarField(int fieldIndex, double lo, double hi) {
 }
 
 bool PointRenderer::ensureFramebuffer(int width, int height) {
-  if (fbo_ != 0 && width == fboWidth_ && height == fboHeight_) return true;
+  viewportWidth_ = width;
+  viewportHeight_ = height;
+
+  const int wantWidth = std::min(roundUpTo(width, kFramebufferGranularity),
+                                 kMaxFramebufferDimension);
+  const int wantHeight = std::min(roundUpTo(height, kFramebufferGranularity),
+                                  kMaxFramebufferDimension);
+
+  // Grow when needed; shrink only when the allocation is more than twice
+  // the requirement in both axes, so dragging a panel back and forth does
+  // not thrash.
+  const bool tooSmall = wantWidth > fboWidth_ || wantHeight > fboHeight_;
+  const bool wastingMemory = fboWidth_ > wantWidth * 2 && fboHeight_ > wantHeight * 2;
+  if (fbo_ != 0 && !tooSmall && !wastingMemory) return true;
 
   if (fbo_ == 0) glCreateFramebuffers(1, &fbo_);
 
-  colorTex_.create2D(width, height, GL_RGBA8);
+  colorTex_.create2D(wantWidth, wantHeight, GL_RGBA8);
   // Linear eye distance for EDL. R32F because the range spans centimetres
   // to kilometres and half-float would band badly at the far end.
-  viewDepthTex_.create2D(width, height, GL_R32F);
+  viewDepthTex_.create2D(wantWidth, wantHeight, GL_R32F);
   // Float depth is what makes reversed-Z worthwhile; a fixed-point buffer
   // would throw away the precision the projection just bought.
-  depthTex_.create2D(width, height, GL_DEPTH_COMPONENT32F);
+  depthTex_.create2D(wantWidth, wantHeight, GL_DEPTH_COMPONENT32F);
 
   glNamedFramebufferTexture(fbo_, GL_COLOR_ATTACHMENT0, colorTex_.id(), 0);
   glNamedFramebufferTexture(fbo_, GL_COLOR_ATTACHMENT1, viewDepthTex_.id(), 0);
@@ -263,8 +287,11 @@ bool PointRenderer::ensureFramebuffer(int width, int height) {
     logError("framebuffer incomplete: 0x{:x}", static_cast<unsigned>(status));
     return false;
   }
-  fboWidth_ = width;
-  fboHeight_ = height;
+  fboWidth_ = wantWidth;
+  fboHeight_ = wantHeight;
+  ++framebufferAllocations_;
+  logDebug("offscreen targets now {}x{} for a {}x{} viewport", wantWidth, wantHeight, width,
+           height);
   return true;
 }
 
@@ -425,8 +452,12 @@ void PointRenderer::render(const Camera& camera, int viewportX, int viewportY, i
   viewDepthTex_.bindUnit(1);
   edlProgram_.set("uColor", 0);
   edlProgram_.set("uViewDepth", 1);
-  edlProgram_.set("uTexelSize", 1.0f / static_cast<float>(width),
-                  1.0f / static_cast<float>(height));
+  // The targets may be larger than the viewport, so sampling is confined
+  // to the sub-rectangle that was actually rendered into.
+  edlProgram_.set("uUvScale", static_cast<float>(width) / static_cast<float>(fboWidth_),
+                  static_cast<float>(height) / static_cast<float>(fboHeight_));
+  edlProgram_.set("uTexelSize", 1.0f / static_cast<float>(fboWidth_),
+                  1.0f / static_cast<float>(fboHeight_));
   edlProgram_.set("uStrength", settings.edlStrength);
   edlProgram_.set("uRadius", settings.edlRadius);
   edlProgram_.set("uBackground", settings.background);
