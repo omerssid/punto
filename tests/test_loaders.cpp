@@ -259,6 +259,12 @@ void testFormatDetection() {
            static_cast<int>(CloudFormat::Pcd));
   CHECK_EQ(static_cast<int>(detectFormat((fixtureDir() / "helix.bin").string())),
            static_cast<int>(CloudFormat::KittiBin));
+  CHECK_EQ(static_cast<int>(detectFormat((fixtureDir() / "helix_le.ply").string())),
+           static_cast<int>(CloudFormat::Ply));
+  CHECK_EQ(static_cast<int>(detectFormat((fixtureDir() / "helix_ascii.ply").string())),
+           static_cast<int>(CloudFormat::Ply));
+  CHECK_EQ(static_cast<int>(detectFormat((fixtureDir() / "helix_12_fmt3.las").string())),
+           static_cast<int>(CloudFormat::Las));
 }
 
 void testStatsAgainstKnownValues() {
@@ -311,6 +317,142 @@ void testLzfEdgeCases() {
   CHECK_EQ(static_cast<int>(out[0]), 0x42);
 }
 
+// Every PLY encoding must agree, and must agree with the PCD holding the
+// same points. The big-endian case in particular exercises byte swapping on
+// every field width.
+void testPlyEncodingsAgree() {
+  beginTest("every PLY encoding decodes to the same cloud");
+  const PointCloud ascii = load("helix_ascii.ply");
+  const PointCloud little = load("helix_le.ply");
+  const PointCloud big = load("helix_be.ply");
+  const PointCloud faces = load("helix_faces.ply");
+  const PointCloud leading = load("helix_leading.ply");
+  if (little.empty()) return;
+
+  CHECK_EQ(little.size(), std::size_t{5000});
+  expectSameCloud(little, big, 0.0, "little-endian vs big-endian");
+  expectSameCloud(little, ascii, 1e-5, "little-endian vs ascii");
+  // A trailing face element must not disturb the vertex block.
+  expectSameCloud(little, faces, 0.0, "with a face element appended");
+  // An element declared BEFORE vertex means the vertex block does not start
+  // at the payload offset; the reader has to skip past it.
+  expectSameCloud(little, leading, 0.0, "with an element preceding the vertices");
+
+  CHECK(little.hasColors());
+  const FieldInfo* intensity = little.findField("intensity");
+  CHECK(intensity != nullptr);
+  if (intensity != nullptr)
+    CHECK_EQ(static_cast<int>(intensity->type), static_cast<int>(FieldType::U16));
+}
+
+void testPlyMatchesPcd() {
+  beginTest("PLY and PCD of the same points agree");
+  const PointCloud ply = load("helix_le.ply");
+  const PointCloud pcd = load("helix_binary.pcd");
+  if (ply.empty() || pcd.empty()) return;
+
+  CHECK_EQ(ply.size(), pcd.size());
+  std::size_t mismatch = 0;
+  for (std::size_t i = 0; i < std::min(ply.size(), pcd.size()); ++i) {
+    const Vec3 a = ply.worldPosition(i);
+    const Vec3 b = pcd.worldPosition(i);
+    if (std::fabs(a.x - b.x) > 1e-6 || std::fabs(a.y - b.y) > 1e-6 ||
+        std::fabs(a.z - b.z) > 1e-6)
+      ++mismatch;
+  }
+  CHECK_EQ(mismatch, std::size_t{0});
+}
+
+void testLas() {
+  beginTest("LAS point formats, scaled integer coordinates and classification");
+  const PointCloud f3 = load("helix_12_fmt3.las");   // LAS 1.2, GPS time + RGB
+  const PointCloud f7 = load("helix_14_fmt7.las");   // LAS 1.4, 64-bit count
+  const PointCloud f0 = load("helix_12_fmt0.las");   // minimal format
+  if (f3.empty()) return;
+
+  CHECK_EQ(f3.size(), std::size_t{5000});
+  CHECK_EQ(f7.size(), std::size_t{5000});
+  CHECK_EQ(f0.size(), std::size_t{5000});
+
+  // Coordinates are int32 scaled by 0.001, so they round-trip to a
+  // millimetre and no better.
+  const PointCloud pcd = load("helix_binary.pcd");
+  if (!pcd.empty()) {
+    std::size_t mismatch = 0;
+    for (std::size_t i = 0; i < f3.size(); ++i) {
+      const Vec3 a = f3.worldPosition(i);
+      const Vec3 b = pcd.worldPosition(i);
+      if (std::fabs(a.x - b.x) > 1e-3 || std::fabs(a.y - b.y) > 1e-3 ||
+          std::fabs(a.z - b.z) > 1e-3)
+        ++mismatch;
+    }
+    CHECK_EQ(mismatch, std::size_t{0});
+  }
+
+  // Formats 0-5 pack synthetic/key-point/withheld flags into the top three
+  // bits of the classification byte; the fixture sets one every 50 points.
+  // Unmasked, a class of 6 would read as 134.
+  const FieldInfo* classification = f3.findField("classification");
+  CHECK(classification != nullptr);
+  if (classification != nullptr) {
+    CHECK(classification->stats.max <= 31.0);
+    CHECK_EQ(static_cast<int>(classification->role), static_cast<int>(FieldRole::Label));
+  }
+
+  // GPS time is float64 and must survive as such.
+  const FieldInfo* gps = f3.findField("gps_time");
+  CHECK(gps != nullptr);
+  if (gps != nullptr) {
+    CHECK_EQ(static_cast<int>(gps->type), static_cast<int>(FieldType::F64));
+    CHECK_NEAR(gps->stats.min, 1700000000.0, 1e-5);
+  }
+
+  // Format 0 carries no colour or GPS time.
+  CHECK(!f0.hasColors());
+  CHECK(f0.findField("gps_time") == nullptr);
+  CHECK(f3.hasColors());
+  CHECK(f7.hasColors());
+}
+
+void testLasColorDepthHeuristic() {
+  beginTest("LAS 16-bit and 8-bit colour channels both land on the same colours");
+  // LAS declares colour as 16-bit, but many files written from 8-bit
+  // imagery leave the values in 0..255. Guessing wrong makes a cloud either
+  // black or saturated, so the reader samples to decide.
+  const PointCloud wide = load("helix_12_fmt3.las");      // values scaled by 257
+  const PointCloud narrow = load("helix_8bitcolor.las");  // values left at 0..255
+  const PointCloud reference = load("helix_rgb.pcd");
+  if (wide.empty() || narrow.empty() || reference.empty()) return;
+
+  std::size_t mismatchWide = 0;
+  std::size_t mismatchNarrow = 0;
+  for (std::size_t i = 0; i < reference.size(); ++i) {
+    if (wide.colors[i] != reference.colors[i]) ++mismatchWide;
+    if (narrow.colors[i] != reference.colors[i]) ++mismatchNarrow;
+  }
+  CHECK_EQ(mismatchWide, std::size_t{0});
+  CHECK_EQ(mismatchNarrow, std::size_t{0});
+}
+
+void testGreyscaleDetection() {
+  beginTest("greyscale colour is detected per point, not from channel statistics");
+  const PointCloud grey = load("helix_greyscale.pcd");
+  const PointCloud colour = load("helix_rgb.pcd");
+  if (grey.empty() || colour.empty()) return;
+
+  CHECK(grey.colorIsGreyscale);
+  CHECK_NEAR(grey.colorGreyscaleFraction, 1.0, 1e-9);
+
+  // The colour fixture cycles R, G and B at different rates, so the three
+  // channels have near-identical means and standard deviations while being
+  // different on every single point. Comparing aggregate statistics -- the
+  // obvious test -- calls this greyscale, which is why it is done per point.
+  CHECK(!colour.colorIsGreyscale);
+  const FieldStats& r = colour.colorChannelStats[0];
+  const FieldStats& g = colour.colorChannelStats[1];
+  CHECK(std::fabs(r.mean - g.mean) < 1.0);  // the trap the old test fell into
+}
+
 void testMissingFileIsAnError() {
   beginTest("missing and malformed inputs are reported, not crashed on");
   PointCloud cloud;
@@ -335,6 +477,11 @@ int main() {
   testPackedRgb();
   testKittiBin();
   testFormatDetection();
+  testPlyEncodingsAgree();
+  testPlyMatchesPcd();
+  testLas();
+  testLasColorDepthHeuristic();
+  testGreyscaleDetection();
   testStatsAgainstKnownValues();
   testLzfEdgeCases();
   testMissingFileIsAnError();

@@ -135,16 +135,11 @@ void printReport(const PointCloud& cloud, const LoadResult& result) {
                   "uint8", "color", s.min, s.max, s.mean, s.stddev,
                   sparkline(s.histogram, 24).c_str());
     }
-    // If all three channels share a mean and spread, the cloud is almost
-    // certainly intensity replicated across RGB rather than true colour.
-    const FieldStats& r = cloud.colorChannelStats[0];
-    const FieldStats& g = cloud.colorChannelStats[1];
-    const FieldStats& b = cloud.colorChannelStats[2];
-    greyscale = r.valid() && g.valid() && b.valid() &&
-                std::abs(r.mean - g.mean) < 0.5 && std::abs(g.mean - b.mean) < 0.5 &&
-                std::abs(r.stddev - g.stddev) < 0.5 && std::abs(g.stddev - b.stddev) < 0.5;
+    greyscale = cloud.colorIsGreyscale;
     if (greyscale)
-      std::printf("    \x1b[33mchannels are identical: greyscale, probably intensity as RGB\x1b[0m\n");
+      std::printf("    \x1b[33mR = G = B on %.1f%% of points: greyscale, probably "
+                  "intensity stored as RGB\x1b[0m\n",
+                  cloud.colorGreyscaleFraction * 100.0);
   }
 
   const LoadTiming& t = cloud.timing;

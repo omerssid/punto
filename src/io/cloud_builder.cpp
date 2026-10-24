@@ -21,20 +21,43 @@ inline T loadUnaligned(const std::byte* p) {
   return v;
 }
 
-inline double readAsDouble(const std::byte* p, FieldType t) {
+// Reverses the bytes of a value read from a big-endian stream.
+template <typename T>
+inline T swapBytes(T v) {
+  std::byte bytes[sizeof(T)];
+  std::memcpy(bytes, &v, sizeof(T));
+  for (std::size_t i = 0; i < sizeof(T) / 2; ++i)
+    std::swap(bytes[i], bytes[sizeof(T) - 1 - i]);
+  T out;
+  std::memcpy(&out, bytes, sizeof(T));
+  return out;
+}
+
+template <typename T>
+inline T loadUnaligned(const std::byte* p, bool swap) {
+  const T v = loadUnaligned<T>(p);
+  return swap ? swapBytes(v) : v;
+}
+
+inline double readAsDouble(const std::byte* p, FieldType t, bool swap = false) {
   switch (t) {
     case FieldType::I8:  return static_cast<double>(loadUnaligned<std::int8_t>(p));
-    case FieldType::I16: return static_cast<double>(loadUnaligned<std::int16_t>(p));
-    case FieldType::I32: return static_cast<double>(loadUnaligned<std::int32_t>(p));
-    case FieldType::I64: return static_cast<double>(loadUnaligned<std::int64_t>(p));
+    case FieldType::I16: return static_cast<double>(loadUnaligned<std::int16_t>(p, swap));
+    case FieldType::I32: return static_cast<double>(loadUnaligned<std::int32_t>(p, swap));
+    case FieldType::I64: return static_cast<double>(loadUnaligned<std::int64_t>(p, swap));
     case FieldType::U8:  return static_cast<double>(loadUnaligned<std::uint8_t>(p));
-    case FieldType::U16: return static_cast<double>(loadUnaligned<std::uint16_t>(p));
-    case FieldType::U32: return static_cast<double>(loadUnaligned<std::uint32_t>(p));
-    case FieldType::U64: return static_cast<double>(loadUnaligned<std::uint64_t>(p));
-    case FieldType::F32: return static_cast<double>(loadUnaligned<float>(p));
-    case FieldType::F64: return loadUnaligned<double>(p);
+    case FieldType::U16: return static_cast<double>(loadUnaligned<std::uint16_t>(p, swap));
+    case FieldType::U32: return static_cast<double>(loadUnaligned<std::uint32_t>(p, swap));
+    case FieldType::U64: return static_cast<double>(loadUnaligned<std::uint64_t>(p, swap));
+    case FieldType::F32: return static_cast<double>(loadUnaligned<float>(p, swap));
+    case FieldType::F64: return loadUnaligned<double>(p, swap);
   }
   return 0.0;
+}
+
+// Reads a value and applies the entry's affine transform.
+inline double readTransformed(const std::byte* p, const DecodePlan::Entry& e) {
+  return readAsDouble(p, e.type, e.byteSwap) * e.scale + e.offset;
 }
 
 // Reinterprets the field's bytes as a 32-bit colour word. PCL stores packed
@@ -248,9 +271,9 @@ Vec3 chooseOrigin(const DecodePlan& plan, const std::byte* base, std::size_t poi
 
   Aabb box;
   for (std::size_t i = 0; i < pointCount; i += stride) {
-    const Vec3 p{readAsDouble(base + px->srcOffset + i * px->srcStride, px->type),
-                 readAsDouble(base + py->srcOffset + i * py->srcStride, py->type),
-                 readAsDouble(base + pz->srcOffset + i * pz->srcStride, pz->type)};
+    const Vec3 p{readTransformed(base + px->srcOffset + i * px->srcStride, *px),
+                 readTransformed(base + py->srcOffset + i * py->srcStride, *py),
+                 readTransformed(base + pz->srcOffset + i * pz->srcStride, *pz)};
     if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) continue;
     box.expand(p);
   }
@@ -277,9 +300,9 @@ std::uint64_t decodeRange(const DecodePlan& plan, const std::byte* base, std::si
       switch (e.dest) {
         // Subtract the origin in double, then narrow. Narrowing first would
         // have already lost the precision the rebasing exists to preserve.
-        case FieldDest::PosX: pos.x = static_cast<float>(readAsDouble(src, e.type) - origin.x); break;
-        case FieldDest::PosY: pos.y = static_cast<float>(readAsDouble(src, e.type) - origin.y); break;
-        case FieldDest::PosZ: pos.z = static_cast<float>(readAsDouble(src, e.type) - origin.z); break;
+        case FieldDest::PosX: pos.x = static_cast<float>(readTransformed(src, e) - origin.x); break;
+        case FieldDest::PosY: pos.y = static_cast<float>(readTransformed(src, e) - origin.y); break;
+        case FieldDest::PosZ: pos.z = static_cast<float>(readTransformed(src, e) - origin.z); break;
 
         case FieldDest::PackedRgb: {
           const std::uint32_t v = readAsBits32(src, e.type);
@@ -300,19 +323,26 @@ std::uint64_t decodeRange(const DecodePlan& plan, const std::byte* base, std::si
           break;
         }
         case FieldDest::ColorR:
-          cr = channelToByte(readAsDouble(src, e.type), e.colorIsNormalizedFloat); sawColor = true; break;
+          cr = channelToByte(readTransformed(src, e), e.colorIsNormalizedFloat); sawColor = true; break;
         case FieldDest::ColorG:
-          cg = channelToByte(readAsDouble(src, e.type), e.colorIsNormalizedFloat); sawColor = true; break;
+          cg = channelToByte(readTransformed(src, e), e.colorIsNormalizedFloat); sawColor = true; break;
         case FieldDest::ColorB:
-          cb = channelToByte(readAsDouble(src, e.type), e.colorIsNormalizedFloat); sawColor = true; break;
+          cb = channelToByte(readTransformed(src, e), e.colorIsNormalizedFloat); sawColor = true; break;
         case FieldDest::ColorA:
-          ca = channelToByte(readAsDouble(src, e.type), e.colorIsNormalizedFloat); sawColor = true; break;
+          ca = channelToByte(readTransformed(src, e), e.colorIsNormalizedFloat); sawColor = true; break;
 
         case FieldDest::Column: {
-          // Source and destination share a type, so the bytes move verbatim.
           ScalarColumn& col = cloud.columns[static_cast<std::size_t>(e.column)];
           const std::size_t esz = col.elementSize();
-          std::memcpy(col.data() + i * esz, src, esz);
+          if (e.byteSwap && esz > 1) {
+            // Reverse into place; the column keeps the file's value, just
+            // in host order.
+            std::byte* dst = col.data() + i * esz;
+            for (std::size_t b = 0; b < esz; ++b) dst[b] = src[esz - 1 - b];
+          } else {
+            // Source and destination share a type, so the bytes move verbatim.
+            std::memcpy(col.data() + i * esz, src, esz);
+          }
           break;
         }
         case FieldDest::Skip:

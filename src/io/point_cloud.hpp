@@ -86,6 +86,14 @@ class PointCloud {
   std::array<FieldStats, 4> colorChannelStats{};
   bool colorStatsValid = false;
 
+  // True when essentially every point has R == G == B.
+  //
+  // Tested per point rather than by comparing channel statistics: two
+  // genuinely different colourings can share a mean and standard deviation,
+  // and reporting a colour cloud as greyscale is worse than saying nothing.
+  bool colorIsGreyscale = false;
+  double colorGreyscaleFraction = 0.0;
+
   // Points rejected during load for having non-finite coordinates.
   std::uint64_t invalidPointsDropped = 0;
 

@@ -56,6 +56,18 @@ struct DecodePlan {
     // Separate colour channels declared as floats are taken to be 0..1;
     // integer channels are taken to be 0..255.
     bool colorIsNormalizedFloat = false;
+
+    // Affine transform applied to positions and colour channels as they are
+    // read: value = raw * scale + offset. LAS needs both -- it stores
+    // coordinates as scaled integers, and its colour channels are 16-bit
+    // where ours are 8. Identity by default, and never applied to scalar
+    // columns, which keep the file's exact bytes.
+    double scale = 1.0;
+    double offset = 0.0;
+
+    // Byte-swap the raw value before interpreting it. Needed only for
+    // PLY's binary_big_endian variant.
+    bool byteSwap = false;
   };
 
   std::vector<Entry> entries;

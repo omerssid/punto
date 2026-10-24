@@ -146,6 +146,27 @@ FieldStats colorChannelStatsFor(const std::vector<std::uint32_t>& colors, int ch
   return stats;
 }
 
+// Fraction of points whose three channels are equal. Sampled, because the
+// answer is a yes/no and a few thousand points settle it.
+double greyscaleFraction(const std::vector<std::uint32_t>& colors) {
+  const std::size_t n = colors.size();
+  if (n == 0) return 0.0;
+  constexpr std::size_t kSamples = 8192;
+  const std::size_t step = std::max<std::size_t>(1, n / kSamples);
+
+  std::size_t tested = 0;
+  std::size_t equal = 0;
+  for (std::size_t i = 0; i < n; i += step) {
+    const std::uint32_t c = colors[i];
+    const std::uint32_t r = c & 0xFFu;
+    const std::uint32_t g = (c >> 8) & 0xFFu;
+    const std::uint32_t b = (c >> 16) & 0xFFu;
+    if (r == g && g == b) ++equal;
+    ++tested;
+  }
+  return tested > 0 ? static_cast<double>(equal) / static_cast<double>(tested) : 0.0;
+}
+
 }  // namespace
 
 const FieldInfo* PointCloud::findField(std::string_view name) const {
@@ -214,6 +235,8 @@ void PointCloud::computeAllStats() {
   if (hasColors()) {
     for (int ch = 0; ch < 4; ++ch) colorChannelStats[static_cast<std::size_t>(ch)] = colorChannelStatsFor(colors, ch);
     colorStatsValid = true;
+    colorGreyscaleFraction = greyscaleFraction(colors);
+    colorIsGreyscale = colorGreyscaleFraction > 0.99;
   }
 
   for (FieldInfo& f : fields) {
@@ -245,6 +268,8 @@ void PointCloud::clear() {
   organized = false;
   colorStatsValid = false;
   colorChannelStats = {};
+  colorIsGreyscale = false;
+  colorGreyscaleFraction = 0.0;
   invalidPointsDropped = 0;
   width = height = 0;
 }

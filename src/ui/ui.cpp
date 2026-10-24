@@ -621,13 +621,11 @@ void Ui::drawStatisticsPanel(const UiInput& input) {
       histogramWidget((std::string(names[ch]) + "##chist").c_str(), s.histogram, 0.0, 255.0, lo, hi,
                       0, false, 38.0f);
     }
-    const FieldStats& r = cloud->colorChannelStats[0];
-    const FieldStats& g = cloud->colorChannelStats[1];
-    const FieldStats& b = cloud->colorChannelStats[2];
-    if (r.valid() && g.valid() && b.valid() && std::abs(r.mean - g.mean) < 0.5 &&
-        std::abs(g.mean - b.mean) < 0.5)
+    if (cloud->colorIsGreyscale)
       ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1),
-                         "channels identical: greyscale, probably intensity as RGB");
+                         "R = G = B on %.1f%% of points: greyscale, probably "
+                         "intensity stored as RGB",
+                         cloud->colorGreyscaleFraction * 100.0);
   }
 
   if (ImGui::CollapsingHeader("Load and chunking")) {
