@@ -83,7 +83,7 @@ jobs:
 
           mkdir -p "dist/${name}"
           cp build/punto-viewer build/punto-probe "dist/${name}/"
-          cp README.md "dist/${name}/"
+          cp README.md LICENSE "dist/${name}/"
           strip "dist/${name}/punto-viewer" "dist/${name}/punto-probe"
 
           # The binaries link against the system GL, GLFW, GLEW and laszip,

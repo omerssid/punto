@@ -289,6 +289,15 @@ loaded once and treated as immutable all the way down, so editing it means
 reworking how chunks, the GPU buffers and the source-row mapping stay in
 step when points disappear. Worth knowing before building on this.
 
+## Licence
+
+MIT — see [LICENSE](LICENSE).
+
+Vendored dependencies keep their own: [Dear ImGui](third_party/imgui/LICENSE.txt)
+(MIT) and `stb_image_write` (public domain / MIT, stated in the header).
+`laszip` is linked optionally at build time and is licensed LGPL-2.1, so it is
+a dependency rather than a bundled component.
+
 ## Attribution
 
 Developed with assistance from Claude (Anthropic).
