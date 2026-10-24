@@ -12,6 +12,27 @@ endif()
 
 option(PUNTO_NATIVE_ARCH "Build for the host CPU (-march=native)" ON)
 option(PUNTO_WERROR      "Treat warnings as errors" OFF)
+# Link the C++ runtime statically. For binaries built on an older
+# distribution and run on newer ones: the glibc requirement comes from the
+# build host, but libstdc++ comes from the compiler, so a newer GCC on an
+# older distribution otherwise produces something that runs nowhere.
+option(PUNTO_STATIC_CXX_RUNTIME "Link libstdc++ and libgcc statically" OFF)
+
+# std::format is used throughout the logging and UI layers -- 32 call sites
+# -- and libstdc++ only shipped it in GCC 13. Fail here with a clear reason
+# rather than 47 files deep on a missing <format>.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13)
+  message(FATAL_ERROR
+    "GCC ${CMAKE_CXX_COMPILER_VERSION} is too old: <format> arrived in GCC 13.\n"
+    "  Ubuntu 22.04 ships GCC 11 by default. Install a newer one with:\n"
+    "    sudo add-apt-repository ppa:ubuntu-toolchain-r/test\n"
+    "    sudo apt install g++-13\n"
+    "    cmake -S . -B build -DCMAKE_CXX_COMPILER=g++-13")
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 17)
+  message(WARNING
+    "Clang ${CMAKE_CXX_COMPILER_VERSION} may lack <format>; it needs libc++ 17 "
+    "or libstdc++ from GCC 13.")
+endif()
 
 add_library(punto-flags INTERFACE)
 target_compile_options(punto-flags INTERFACE
@@ -23,6 +44,9 @@ target_compile_options(punto-flags INTERFACE
   $<$<AND:$<BOOL:${PUNTO_NATIVE_ARCH}>,$<CONFIG:Release>>:-march=native>
 )
 target_compile_features(punto-flags INTERFACE cxx_std_20)
+if(PUNTO_STATIC_CXX_RUNTIME)
+  target_link_options(punto-flags INTERFACE -static-libstdc++ -static-libgcc)
+endif()
 
 # ---------------------------------------------------------------- core
 

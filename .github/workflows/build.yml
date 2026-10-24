@@ -15,10 +15,19 @@ env:
   # Distributed binaries must not be built with -march=native: the runner
   # may have instructions the machine downloading them does not, and the
   # result is a SIGILL on startup rather than a graceful failure.
+  #
+  # GCC 13 because std::format only reached libstdc++ there, and 22.04
+  # ships GCC 11. Its runtime is linked statically: the glibc requirement
+  # comes from the build host (2.35 here) but libstdc++ comes from the
+  # compiler, so a dynamically linked GCC 13 binary would demand
+  # GLIBCXX_3.4.31 and refuse to start on the very distribution it was
+  # built on, which has 3.4.30.
   CMAKE_FLAGS: >-
     -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_CXX_COMPILER=g++-13
     -DPUNTO_NATIVE_ARCH=OFF
     -DPUNTO_WERROR=ON
+    -DPUNTO_STATIC_CXX_RUNTIME=ON
 
 jobs:
   build:
@@ -32,11 +41,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install GCC 13
+        # 22.04 ships GCC 11; <format> needs 13.
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++-13
+          g++-13 --version
+
       - name: Install dependencies
         run: |
-          sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build \
+            cmake ninja-build \
             libglfw3-dev libglew-dev libgl1-mesa-dev \
             liblaszip-dev libxrandr-dev
 
@@ -66,6 +82,28 @@ jobs:
           ./build/punto-probe tests/fixtures/helix_12_fmt3.laz > /dev/null
           echo "binaries run"
 
+      - name: Check the binaries are actually portable
+        # The whole point of building on 22.04 with a static C++ runtime.
+        # A GLIBCXX reference here means the static link silently failed
+        # and the download would not start on the distribution it targets.
+        run: |
+          set -euo pipefail
+          for binary in build/punto-viewer build/punto-probe; do
+            # Without this the whole check passes vacuously when a binary
+            # is missing, because grep finding nothing looks like success.
+            test -f "$binary" || { echo "::error::$binary was not built"; exit 1; }
+
+            glibcxx=$(objdump -T "$binary" | grep -oP 'GLIBCXX_[0-9.]+' | sort -V -u | tail -1 || true)
+            if [ -n "$glibcxx" ]; then
+              echo "::error::$binary needs $glibcxx at runtime; the static link failed"
+              exit 1
+            fi
+
+            glibc=$(objdump -T "$binary" | grep -oP 'GLIBC_[0-9.]+' | sort -V -u | tail -1 || true)
+            test -n "$glibc" || { echo "::error::no glibc symbols in $binary; objdump failed"; exit 1; }
+            echo "$binary: no libstdc++ dependency, needs glibc <= $glibc"
+          done
+
       - name: Package
         id: package
         run: |
@@ -91,8 +129,10 @@ jobs:
           cat > "dist/${name}/INSTALL.txt" <<'EOF'
           punto -- Linux x86_64
 
-          Built on Ubuntu 22.04 (glibc 2.35). Runs on Ubuntu 22.04 or newer,
-          and on other distributions with a comparable glibc.
+          Built on Ubuntu 22.04 (glibc 2.35) with GCC 13 and a statically
+          linked C++ runtime, so it needs no libstdc++ of its own. Runs on
+          Ubuntu 22.04 or newer, and on other distributions with a
+          comparable glibc.
 
           Runtime dependencies:
 
@@ -167,11 +207,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install GCC 13
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends g++-13
+
       - name: Install dependencies
         run: |
-          sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build \
+            cmake ninja-build \
             libglfw3-dev libglew-dev libgl1-mesa-dev
 
       - name: Configure

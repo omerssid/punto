@@ -58,7 +58,15 @@ threads against 1440 ms on one.
 
 ## Building
 
-Needs a C++20 compiler, CMake 3.20+, OpenGL 4.6, and:
+Needs **GCC 13 or newer**, CMake 3.20+ and OpenGL 4.6. `std::format` is used
+throughout, and libstdc++ only shipped it in GCC 13 — Ubuntu 24.04 has it,
+22.04 ships GCC 11 and needs a newer one:
+
+```sh
+# Ubuntu 22.04 only
+sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+sudo apt install g++-13      # then add -DCMAKE_CXX_COMPILER=g++-13 below
+```
 
 ```sh
 sudo apt install build-essential cmake libglfw3-dev libglew-dev libgl1-mesa-dev
@@ -78,6 +86,7 @@ found. Shaders are embedded into the binary, which is a single ~2 MB file.
 | --- | --- | --- |
 | `PUNTO_NATIVE_ARCH` | `ON` | `-march=native`. **Turn off for binaries you distribute** — otherwise they crash on older CPUs. |
 | `PUNTO_WERROR` | `OFF` | warnings as errors |
+| `PUNTO_STATIC_CXX_RUNTIME` | `OFF` | links libstdc++ and libgcc statically. For binaries built on an older distribution to run on newer ones: the glibc requirement comes from the build host, but libstdc++ comes from the compiler, so a GCC 13 binary built on 22.04 otherwise demands a libstdc++ that 22.04 does not have. |
 
 Two environment variables are read at runtime: `PUNTO_THREADS` caps worker
 threads, and `PUNTO_GL_SYNC_DEBUG=1` forces synchronous GL debug output, which
