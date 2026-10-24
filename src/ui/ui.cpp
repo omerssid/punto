@@ -297,6 +297,36 @@ bool Ui::wantsKeyboard() const {
   return initialized_ && ImGui::GetIO().WantCaptureKeyboard;
 }
 
+Ui::ViewportRect Ui::viewportRect(int framebufferWidth, int framebufferHeight) const {
+  ViewportRect rect{0, 0, framebufferWidth, framebufferHeight};
+  if (!initialized_ || !panelsVisible_) return rect;
+
+  const ImGuiDockNode* central = ImGui::DockBuilderGetCentralNode(dockspaceId_);
+  if (central == nullptr || central->Size.x < 1.0f || central->Size.y < 1.0f) return rect;
+
+  // ImGui works in logical points with the origin at the top left; GL wants
+  // framebuffer pixels with the origin at the bottom left.
+  const ImGuiIO& io = ImGui::GetIO();
+  const float scaleX = io.DisplaySize.x > 0.0f
+                           ? static_cast<float>(framebufferWidth) / io.DisplaySize.x
+                           : 1.0f;
+  const float scaleY = io.DisplaySize.y > 0.0f
+                           ? static_cast<float>(framebufferHeight) / io.DisplaySize.y
+                           : 1.0f;
+
+  const int x = static_cast<int>(central->Pos.x * scaleX);
+  const int width = static_cast<int>(central->Size.x * scaleX);
+  const int height = static_cast<int>(central->Size.y * scaleY);
+  const int topY = static_cast<int>(central->Pos.y * scaleY);
+  const int y = framebufferHeight - topY - height;
+
+  rect.x = std::max(0, x);
+  rect.y = std::max(0, y);
+  rect.width = std::clamp(width, 1, framebufferWidth);
+  rect.height = std::clamp(height, 1, framebufferHeight);
+  return rect;
+}
+
 void Ui::syncScalarField(int field, double lo, double hi) {
   scalarField_ = field;
   scalarLo_ = lo;
@@ -325,8 +355,21 @@ void Ui::drawViewportAnnotations(const Camera& camera, const Vec3& origin, int w
                                  int height) {
   if (!initialized_ || measurePoints_.size() < 2) return;
 
-  const float aspect = static_cast<float>(width) / static_cast<float>(std::max(1, height));
+  // Labels must land on the viewport the scene was rendered into, which is
+  // the dockspace's central node rather than the whole window.
+  const ViewportRect rect = viewportRect(width, height);
+  const float aspect =
+      static_cast<float>(rect.width) / static_cast<float>(std::max(1, rect.height));
   const Mat4 viewProj = camera.viewProjection(aspect);
+
+  // ImGui's foreground list works in logical points from the top left.
+  const ImGuiIO& io = ImGui::GetIO();
+  const float scaleX = width > 0 ? io.DisplaySize.x / static_cast<float>(width) : 1.0f;
+  const float scaleY = height > 0 ? io.DisplaySize.y / static_cast<float>(height) : 1.0f;
+  const float originX = static_cast<float>(rect.x) * scaleX;
+  const float originY = static_cast<float>(height - rect.y - rect.height) * scaleY;
+  const float spanX = static_cast<float>(rect.width) * scaleX;
+  const float spanY = static_cast<float>(rect.height) * scaleY;
 
   // World to screen. Returns false behind the camera, where the perspective
   // divide would mirror the point to the wrong side of the viewport.
@@ -335,8 +378,8 @@ void Ui::drawViewportAnnotations(const Camera& camera, const Vec3& origin, int w
     const Vec4f clip = viewProj * Vec4f{static_cast<float>(local.x), static_cast<float>(local.y),
                                         static_cast<float>(local.z), 1.0f};
     if (clip.w <= 1e-6f) return false;
-    out.x = (clip.x / clip.w * 0.5f + 0.5f) * static_cast<float>(width);
-    out.y = (1.0f - (clip.y / clip.w * 0.5f + 0.5f)) * static_cast<float>(height);
+    out.x = originX + (clip.x / clip.w * 0.5f + 0.5f) * spanX;
+    out.y = originY + (1.0f - (clip.y / clip.w * 0.5f + 0.5f)) * spanY;
     return true;
   };
 
@@ -395,6 +438,7 @@ UiActions Ui::draw(const UiInput& input, RenderSettings& settings, Camera& camer
   // PassthruCentralNode leaves the middle undrawn, which is what lets the
   // viewport render underneath instead of behind an opaque panel.
   const ImGuiID dockspaceId = ImGui::GetID("pcv_dockspace");
+  dockspaceId_ = dockspaceId;
   ImGui::DockSpace(dockspaceId, ImVec2(0, 0), ImGuiDockNodeFlags_PassthruCentralNode);
 
   // Build a sensible layout the first time, when no saved ini exists.
@@ -413,11 +457,18 @@ UiActions Ui::draw(const UiInput& input, RenderSettings& settings, Camera& camer
       ImGuiID centre = dockspaceId;
       const ImGuiID right = ImGui::DockBuilderSplitNode(centre, ImGuiDir_Right, 0.26f,
                                                         nullptr, &centre);
-      ImGuiID rightTop = right;
+      // View gets its own slot at the top rather than joining the tab
+      // group, so switching viewpoint never costs a tab change -- which is
+      // the whole reason it exists instead of the menu.
+      ImGuiID rightRest = right;
+      const ImGuiID rightTop =
+          ImGui::DockBuilderSplitNode(rightRest, ImGuiDir_Up, 0.29f, nullptr, &rightRest);
+      ImGuiID rightMiddle = rightRest;
       const ImGuiID rightBottom =
-          ImGui::DockBuilderSplitNode(rightTop, ImGuiDir_Down, 0.52f, nullptr, &rightTop);
+          ImGui::DockBuilderSplitNode(rightMiddle, ImGuiDir_Down, 0.55f, nullptr, &rightMiddle);
 
-      ImGui::DockBuilderDockWindow("Display", rightTop);
+      ImGui::DockBuilderDockWindow("View", rightTop);
+      ImGui::DockBuilderDockWindow("Display", rightMiddle);
       // Tabbed together: you read one of these at a time.
       ImGui::DockBuilderDockWindow("Cloud statistics", rightBottom);
       ImGui::DockBuilderDockWindow("Inspector", rightBottom);
@@ -428,6 +479,7 @@ UiActions Ui::draw(const UiInput& input, RenderSettings& settings, Camera& camer
   ImGui::End();
 
   if (panelsVisible_) {
+    if (showView_) drawViewPanel(input, settings, camera, actions);
     if (showStatistics_) drawStatisticsPanel(input);
     if (showDisplay_) drawDisplayPanel(input, settings, actions);
     if (showInspector_) drawInspectorPanel(input, actions);
@@ -471,6 +523,7 @@ void Ui::drawMenuBar(const UiInput& input, RenderSettings& settings, Camera& cam
   }
 
   if (ImGui::BeginMenu("Panels")) {
+    ImGui::MenuItem("View", nullptr, &showView_);
     ImGui::MenuItem("Cloud statistics", nullptr, &showStatistics_);
     ImGui::MenuItem("Display", nullptr, &showDisplay_);
     ImGui::MenuItem("Inspector", nullptr, &showInspector_);
@@ -509,6 +562,99 @@ void Ui::drawMenuBar(const UiInput& input, RenderSettings& settings, Camera& cam
   }
 
   ImGui::EndMenuBar();
+}
+
+void Ui::drawViewPanel(const UiInput& input, RenderSettings& settings, Camera& camera,
+                       UiActions& actions) {
+  if (!ImGui::Begin("View", &showView_)) {
+    ImGui::End();
+    return;
+  }
+
+  const float full = ImGui::GetContentRegionAvail().x;
+  const float spacing = ImGui::GetStyle().ItemSpacing.x;
+
+  // ----------------------------------------------------- navigation mode
+  //
+  // A segmented row rather than a combo: the whole point of this panel is
+  // that switching takes one click, and a combo takes two.
+  const float third = (full - spacing * 2.0f) / 3.0f;
+  struct ModeButton { NavMode mode; const char* label; const char* key; const char* tip; };
+  static const ModeButton kModes[] = {
+      {NavMode::Orbit, "Orbit", "1", "Turntable around a focus point. Best for inspecting "
+                                     "one area."},
+      {NavMode::Fly, "Fly", "2", "First person, WASD to move and drag to look. Best for "
+                                 "travelling along a long map."},
+      {NavMode::TopDown, "Top-down", "3", "Orthographic map view with pan and zoom. Best for "
+                                          "judging coverage and spotting drift."},
+  };
+  for (int i = 0; i < 3; ++i) {
+    if (i > 0) ImGui::SameLine();
+    const bool active = camera.mode == kModes[i].mode;
+    if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_ButtonActive]);
+    if (ImGui::Button(kModes[i].label, ImVec2(third, 0))) {
+      const float aspect = ImGui::GetIO().DisplaySize.x /
+                           std::max(1.0f, ImGui::GetIO().DisplaySize.y);
+      camera.setMode(kModes[i].mode, aspect);
+    }
+    if (active) ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered())
+      ImGui::SetTooltip("%s  (%s)", kModes[i].tip, kModes[i].key);
+  }
+
+  // ------------------------------------------------------ standard views
+  ImGui::SeparatorText("Look from");
+  // Named by the side the camera sits on, because "front" and "left" mean
+  // different things in different tools, while "+X" does not.
+  static const StandardView kRow1[] = {StandardView::Top, StandardView::Bottom,
+                                       StandardView::Isometric};
+  static const StandardView kRow2[] = {StandardView::PlusX, StandardView::MinusX,
+                                       StandardView::PlusY, StandardView::MinusY};
+
+  for (int i = 0; i < 3; ++i) {
+    if (i > 0) ImGui::SameLine();
+    if (ImGui::Button(standardViewName(kRow1[i]), ImVec2(third, 0)))
+      camera.setStandardView(kRow1[i]);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", standardViewTooltip(kRow1[i]));
+  }
+
+  const float quarter = (full - spacing * 3.0f) / 4.0f;
+  for (int i = 0; i < 4; ++i) {
+    if (i > 0) ImGui::SameLine();
+    if (ImGui::Button(standardViewName(kRow2[i]), ImVec2(quarter, 0)))
+      camera.setStandardView(kRow2[i]);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", standardViewTooltip(kRow2[i]));
+  }
+
+  // ------------------------------------------------------------- framing
+  ImGui::SeparatorText("Framing");
+  const float half = (full - spacing) / 2.0f;
+  if (ImGui::Button("Frame all", ImVec2(half, 0))) actions.frameAll = true;
+  if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit the whole cloud in view  (F)");
+  ImGui::SameLine();
+  ImGui::BeginDisabled(!selection_.valid);
+  if (ImGui::Button("Focus selection", ImVec2(half, 0))) actions.focusSelection = true;
+  ImGui::EndDisabled();
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    ImGui::SetTooltip(selection_.valid ? "Centre on the selected point  (G)"
+                                       : "Shift-click a point first");
+
+  if (camera.mode != NavMode::TopDown) {
+    float fov = static_cast<float>(degrees(camera.fovY));
+    fieldLabel("FOV");
+    if (ImGui::SliderFloat("##fov", &fov, 20.0f, 100.0f, "%.0f deg"))
+      camera.fovY = static_cast<float>(radians(std::clamp(fov, 10.0f, 120.0f)));
+  }
+  if (camera.mode == NavMode::Fly) {
+    fieldLabel("Speed");
+    ImGui::SliderFloat("##flyspeed", &camera.moveSpeed,
+                       std::max(0.01f, camera.sceneRadius * 0.005f), camera.sceneRadius * 2.0f,
+                       "%.2f m/s", ImGuiSliderFlags_Logarithmic);
+  }
+
+  (void)settings;
+  (void)input;
+  ImGui::End();
 }
 
 void Ui::drawStatisticsPanel(const UiInput& input) {
@@ -951,7 +1097,7 @@ void Ui::drawInspectorPanel(const UiInput& input, UiActions& actions) {
   }
   ImGui::SameLine();
   ImGui::TextDisabled("%zu picked", measurePoints_.size());
-  ImGui::TextDisabled("press P to pick the point under the cursor");
+  ImGui::TextDisabled("shift-click a point to select it");
   ImGui::Separator();
 
   if (!selection_.valid) {
@@ -1126,6 +1272,12 @@ void Ui::drawStatusBar(const UiInput& input, const Camera& camera) {
     ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
+    // Stated permanently, because an unexpected up axis is the first thing
+    // that confuses anyone opening a cloud from another tool.
+    ImGui::TextDisabled("Z up");
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
 
     const Vec3f eye = camera.position();
     const Vec3 origin = input.cloud != nullptr ? input.cloud->origin : Vec3{0, 0, 0};
@@ -1249,7 +1401,7 @@ void Ui::drawHelpWindow() {
   struct Row { const char* keys; const char* what; };
   static const Row navigation[] = {
       {"left drag", "orbit"},
-      {"shift+left / middle / right drag", "pan"},
+      {"middle / right drag", "pan"},
       {"scroll", "zoom"},
       {"1 / 2 / 3", "orbit / fly / top-down"},
       {"W A S D", "fly forward, left, back, right"},
@@ -1260,7 +1412,8 @@ void Ui::drawHelpWindow() {
       {"double click", "pick and focus in one gesture"},
   };
   static const Row display[] = {
-      {"P", "pick the point under the cursor"},
+      {"shift + click", "select the point under the cursor"},
+      {"P", "select under the cursor, without the mouse"},
       {"C", "cycle colour source"},
       {"E", "toggle eye-dome lighting"},
       {"L", "toggle level of detail"},

@@ -324,17 +324,19 @@ void PointRenderer::runCull(const Camera& camera, int width, int height,
                   GL_BUFFER_UPDATE_BARRIER_BIT);
 }
 
-void PointRenderer::render(const Camera& camera, int width, int height,
-                           const RenderSettings& settings) {
+void PointRenderer::render(const Camera& camera, int viewportX, int viewportY, int width,
+                           int height, const RenderSettings& settings) {
   if (!initialized_ || width <= 0 || height <= 0) return;
 
-  if (source_ == nullptr || source_->chunkCount() == 0) {
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, width, height);
-    glClearColor(settings.background.x, settings.background.y, settings.background.z, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    return;
-  }
+  // Paint the whole window first. Only the viewport rectangle is rendered
+  // into, and the rest would otherwise keep whatever the previous frame
+  // left wherever a panel does not cover it.
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glDisable(GL_SCISSOR_TEST);
+  glClearColor(settings.background.x, settings.background.y, settings.background.z, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+  if (source_ == nullptr || source_->chunkCount() == 0) return;
   if (!ensureFramebuffer(width, height)) return;
 
   const float aspect = static_cast<float>(width) / static_cast<float>(std::max(1, height));
@@ -349,6 +351,8 @@ void PointRenderer::render(const Camera& camera, int width, int height,
   // ---------------------------------------------------------- point pass
   glBeginQuery(GL_TIME_ELAPSED, queries[1]);
   glBindFramebuffer(GL_FRAMEBUFFER, fbo_);
+  // The offscreen target is exactly the viewport's size, so it starts at
+  // its own origin; only the final composite is offset into the window.
   glViewport(0, 0, width, height);
 
   const float clearColor[4] = {settings.background.x, settings.background.y,
@@ -413,7 +417,7 @@ void PointRenderer::render(const Camera& camera, int width, int height,
   // ------------------------------------------------------------ EDL pass
   glBeginQuery(GL_TIME_ELAPSED, queries[2]);
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  glViewport(0, 0, width, height);
+  glViewport(viewportX, viewportY, width, height);
   glDisable(GL_DEPTH_TEST);
 
   edlProgram_.use();

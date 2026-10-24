@@ -40,6 +40,7 @@ add_library(pcv_core STATIC
   src/io/ply_loader.cpp
   src/io/las_loader.cpp
   src/io/laz_decode.cpp
+  src/scene/camera.cpp
   src/scene/chunk_builder.cpp
   src/scene/radix_sort.cpp
   src/scene/ram_chunk_source.cpp
@@ -102,7 +103,6 @@ add_library(pcv_gpu STATIC
   src/gpu/shader.cpp
   src/gpu/point_renderer.cpp
   src/gpu/overlay_renderer.cpp
-  src/scene/camera.cpp
   ${PCV_EMBEDDED_SHADERS}
 )
 target_link_libraries(pcv_gpu PUBLIC pcv_core GLEW::GLEW OpenGL::GL ${PCV_GLFW})
@@ -138,6 +138,10 @@ enable_testing()
 add_executable(pcv_tests tests/test_loaders.cpp)
 target_link_libraries(pcv_tests PRIVATE pcv_core)
 add_test(NAME loaders COMMAND pcv_tests)
+
+add_executable(pcv_camera_tests tests/test_camera.cpp)
+target_link_libraries(pcv_camera_tests PRIVATE pcv_core)
+add_test(NAME camera COMMAND pcv_camera_tests)
 
 add_executable(pcv_chunk_tests tests/test_chunks.cpp)
 target_link_libraries(pcv_chunk_tests PRIVATE pcv_core)

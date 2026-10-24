@@ -26,6 +26,7 @@ void usage() {
       "  --screenshot PATH         render one frame to a PNG and exit\n"
       "  --benchmark [N]           time N frames of a full orbit and exit\n"
       "  --nav orbit|fly|top       initial navigation mode\n"
+      "  --view NAME               top|bottom|+x|-x|+y|-y|iso\n"
       "  --yaw D --pitch D         initial camera angles, degrees\n"
       "  --zoom F                  move F times closer than the framed view\n"
       "  --density F               LOD target points per pixel (default 1.0)\n"
@@ -44,11 +45,12 @@ void usage() {
       "  -h, --help                this message\n"
       "\n"
       "controls:\n"
-      "  left drag        orbit            shift+left / middle / right drag   pan\n"
-      "  double click     pick and focus   Tab  show/hide panels\n"
+      "  left drag        orbit            middle / right drag   pan\n"
+      "  shift + click    select a point   double click  select and focus\n"
+      "  Tab              show/hide panels\n"
       "  scroll           zoom             1 / 2 / 3   orbit / fly / top-down\n"
       "  W A S D Q E      fly              shift / alt  faster / slower\n"
-      "  F  frame all     P  pick point    L  toggle LOD    E  toggle EDL\n"
+      "  F  frame all     L  toggle LOD     E  toggle EDL\n"
       "  C  cycle colour  R  reload shaders               Esc  quit\n");
 }
 
@@ -93,6 +95,23 @@ int main(int argc, char** argv) {
       else if (v == "fly") options.nav = pcv::NavMode::Fly;
       else if (v == "top") options.nav = pcv::NavMode::TopDown;
       else { std::fprintf(stderr, "unknown --nav '%s'\n", v.c_str()); return 2; }
+      continue;
+    }
+    if (arg == "--view" && i + 1 < argc) {
+      const std::string v = argv[++i];
+      const struct { const char* name; pcv::StandardView view; } kViews[] = {
+          {"top", pcv::StandardView::Top},       {"bottom", pcv::StandardView::Bottom},
+          {"+x", pcv::StandardView::PlusX},      {"-x", pcv::StandardView::MinusX},
+          {"+y", pcv::StandardView::PlusY},      {"-y", pcv::StandardView::MinusY},
+          {"iso", pcv::StandardView::Isometric}};
+      bool found = false;
+      for (const auto& candidate : kViews)
+        if (v == candidate.name) { options.standardView = candidate.view; found = true; }
+      if (!found) {
+        std::fprintf(stderr, "unknown --view '%s' (top|bottom|+x|-x|+y|-y|iso)\n", v.c_str());
+        return 2;
+      }
+      options.haveStandardView = true;
       continue;
     }
     if (arg == "--yaw" && i + 1 < argc) {

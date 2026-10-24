@@ -99,9 +99,19 @@ class Ui {
   bool panelsVisible() const { return panelsVisible_; }
   void togglePanels() { panelsVisible_ = !panelsVisible_; }
 
+  // The rectangle the 3D scene should render into: the dockspace's central
+  // node, in GL framebuffer coordinates with the origin bottom-left.
+  //
+  // Rendering to the whole window instead leaves the cloud centred behind
+  // the docked panels rather than in the space actually left for it.
+  struct ViewportRect { int x = 0, y = 0, width = 0, height = 0; };
+  ViewportRect viewportRect(int framebufferWidth, int framebufferHeight) const;
+
  private:
   void drawMenuBar(const UiInput& input, RenderSettings& settings, Camera& camera,
                    UiActions& actions);
+  void drawViewPanel(const UiInput& input, RenderSettings& settings, Camera& camera,
+                     UiActions& actions);
   void drawStatisticsPanel(const UiInput& input);
   void drawDisplayPanel(const UiInput& input, RenderSettings& settings, UiActions& actions);
   void drawInspectorPanel(const UiInput& input, UiActions& actions);
@@ -114,6 +124,7 @@ class Ui {
   bool initialized_ = false;
 
   bool panelsVisible_ = true;
+  bool showView_ = true;
   bool showStatistics_ = true;
   bool showDisplay_ = true;
   bool showInspector_ = true;
@@ -146,6 +157,7 @@ class Ui {
   std::string iniPath_;
   bool layoutBuilt_ = false;
   bool layoutRestored_ = false;
+  unsigned dockspaceId_ = 0;
 };
 
 }  // namespace pcv

@@ -100,10 +100,16 @@ class PointRenderer {
   void setScalarField(int fieldIndex, double lo, double hi);
   int scalarField() const { return scalarField_; }
 
-  void render(const Camera& camera, int width, int height, const RenderSettings& settings);
+  // Renders into a sub-rectangle of the default framebuffer, given in GL
+  // coordinates with the origin bottom-left. The UI passes the dockspace's
+  // central node, so the cloud is centred in the space actually left for
+  // it rather than behind the docked panels.
+  void render(const Camera& camera, int viewportX, int viewportY, int width, int height,
+              const RenderSettings& settings);
 
-  // Reads back the point under the cursor. Returns false when the cursor is
-  // over empty space. `pointIndex` is an index into the cloud's arrays.
+  // Reads back the point under the cursor. `mouseX`/`mouseY` are relative
+  // to the viewport rectangle, not the window. Returns false when the
+  // cursor is over empty space; `pointIndex` indexes the cloud's arrays.
   bool pick(const Camera& camera, int width, int height, int mouseX, int mouseY,
             std::uint32_t& pointIndex, float& viewDistance);
 

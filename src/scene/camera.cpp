@@ -51,6 +51,76 @@ const char* navModeName(NavMode mode) {
   return "?";
 }
 
+const char* standardViewName(StandardView view) {
+  switch (view) {
+    case StandardView::Top:       return "Top";
+    case StandardView::Bottom:    return "Bottom";
+    case StandardView::PlusX:     return "+X";
+    case StandardView::MinusX:    return "-X";
+    case StandardView::PlusY:     return "+Y";
+    case StandardView::MinusY:    return "-Y";
+    case StandardView::Isometric: return "Iso";
+  }
+  return "?";
+}
+
+const char* standardViewTooltip(StandardView view) {
+  switch (view) {
+    case StandardView::Top:       return "Above, looking straight down";
+    case StandardView::Bottom:    return "Below, looking straight up";
+    case StandardView::PlusX:     return "On the +X side, looking toward -X";
+    case StandardView::MinusX:    return "On the -X side, looking toward +X";
+    case StandardView::PlusY:     return "On the +Y side, looking toward -Y";
+    case StandardView::MinusY:    return "On the -Y side, looking toward +Y";
+    case StandardView::Isometric: return "Three-quarter view from +X -Y above";
+  }
+  return "";
+}
+
+void Camera::setStandardView(StandardView view) {
+  // Straight down would make the view direction parallel to the world up
+  // vector and degenerate the view matrix, so the vertical views stop just
+  // short. The residual tilt also fixes which way is up on screen.
+  constexpr float kNearlyVertical = 1.5533f;  // 89 degrees
+
+  switch (view) {
+    case StandardView::Top:
+      yaw = static_cast<float>(radians(-90.0));
+      pitch = kNearlyVertical;
+      break;
+    case StandardView::Bottom:
+      yaw = static_cast<float>(radians(-90.0));
+      pitch = -kNearlyVertical;
+      break;
+    case StandardView::PlusX:
+      yaw = 0.0f;
+      pitch = 0.0f;
+      break;
+    case StandardView::MinusX:
+      yaw = static_cast<float>(radians(180.0));
+      pitch = 0.0f;
+      break;
+    case StandardView::PlusY:
+      yaw = static_cast<float>(radians(90.0));
+      pitch = 0.0f;
+      break;
+    case StandardView::MinusY:
+      yaw = static_cast<float>(radians(-90.0));
+      pitch = 0.0f;
+      break;
+    case StandardView::Isometric:
+      yaw = static_cast<float>(radians(-45.0));
+      // atan(1/sqrt(2)): the angle at which the three axes foreshorten
+      // equally, which is what makes an isometric view read as one.
+      pitch = static_cast<float>(radians(35.264));
+      break;
+  }
+
+  // In fly mode the position is the state, so move it to match the new
+  // direction while keeping the same point in view.
+  if (mode == NavMode::Fly) eye = target - forward() * distance;
+}
+
 Vec3f Camera::orbitOffset() const {
   const float cp = std::cos(pitch);
   return Vec3f{std::cos(yaw) * cp, std::sin(yaw) * cp, std::sin(pitch)} * distance;

@@ -20,6 +20,22 @@ enum class NavMode {
 
 const char* navModeName(NavMode mode);
 
+// Standard viewpoints, named by the side the camera sits on rather than by
+// "front" or "left", which mean different things in different tools. Z is
+// up throughout, per REP-103.
+enum class StandardView {
+  Top,      // above, looking down
+  Bottom,   // below, looking up
+  PlusX,    // on the +X side, looking toward -X
+  MinusX,
+  PlusY,
+  MinusY,
+  Isometric,
+};
+
+const char* standardViewName(StandardView view);
+const char* standardViewTooltip(StandardView view);
+
 struct Frustum {
   // Inward-facing planes: xyz is the normal, w the distance. A point is
   // inside when dot(normal, p) + w >= 0 for all six.
@@ -65,6 +81,9 @@ class Camera {
   void dolly(float scrollTicks);
   void moveLocal(const Vec3f& delta);   // fly mode, camera-relative
   void setMode(NavMode mode, float aspect);
+  // Points the camera at the focus from a standard direction, leaving the
+  // focus and distance alone so the framing is preserved.
+  void setStandardView(StandardView view);
 
   // ------------------------------------------------------------- state
 

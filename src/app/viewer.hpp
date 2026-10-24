@@ -40,6 +40,8 @@ struct ViewerOptions {
   float yawDegrees = -45.0f;
   bool havePitch = false;
   float pitchDegrees = 40.0f;
+  bool haveStandardView = false;
+  StandardView standardView = StandardView::Isometric;
   // Multiplier on the framed distance: 4 means four times closer.
   float zoom = 1.0f;
 
@@ -98,6 +100,8 @@ class Viewer {
 
   void applyUiActions(const UiActions& actions);
   void buildOverlay();
+  Ui::ViewportRect viewport() const;
+  void consumePendingFrame();
   void pickUnderCursor();
   PickedPoint resolvePick(std::uint32_t index, float distance) const;
 
@@ -139,6 +143,7 @@ class Viewer {
   bool colorModeExplicit_ = false;
   float startZoom_ = 1.0f;
   float cropFraction_ = 0.0f;
+  bool pendingFrameAll_ = false;
   std::string requestedField_;
   int activeScalarField_ = -1;
   double activeScalarLo_ = 0.0;

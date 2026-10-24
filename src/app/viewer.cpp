@@ -168,8 +168,14 @@ bool Viewer::openFile(const std::string& path) {
   if (!colorModeExplicit_)
     settings_.colorMode = open_.cloud->hasColors() ? ColorMode::Rgb : ColorMode::Scalar;
 
-  const float aspect = static_cast<float>(width_) / static_cast<float>(std::max(1, height_));
-  camera_.frameBounds(open_.cloud->boundsLocal, aspect);
+  const Ui::ViewportRect rect = viewport();
+  camera_.frameBounds(open_.cloud->boundsLocal,
+                      static_cast<float>(rect.width) /
+                          static_cast<float>(std::max(1, rect.height)));
+  // On the very first open the dockspace has not been laid out yet, so
+  // viewport() still reports the whole window and the framing comes out
+  // about a quarter too wide. Re-frame once the real rectangle is known.
+  pendingFrameAll_ = true;
 
   if (cropFraction_ > 0.0f && open_.cloud->boundsLocal.valid()) {
     const Aabbf& b = open_.cloud->boundsLocal;
@@ -196,17 +202,41 @@ void Viewer::onFramebufferSize(int width, int height) {
   height_ = height;
 }
 
-void Viewer::onMouseButton(int button, int action, int /*mods*/) {
+void Viewer::onMouseButton(int button, int action, int mods) {
   // A press that began over a panel belongs to the panel. Releases are
   // always processed, so a drag that wanders over a panel still ends.
   if (action == GLFW_PRESS && ui_.wantsMouse()) return;
   const bool pressed = action == GLFW_PRESS;
   if (button == GLFW_MOUSE_BUTTON_LEFT) {
+    // The modifier state GLFW reports with the event, rather than polling
+    // the key: polling can disagree if shift is released between the click
+    // and the callback running.
+    const bool shift = (mods & GLFW_MOD_SHIFT) != 0;
+
+    // Shift-click selects the point under the cursor.
+    //
+    // This used to be shift-drag to pan, but panning is already on both
+    // middle and right drag, so the gesture was redundant -- and pointing
+    // at the thing you want is a far more natural way to select it than
+    // parking the cursor and reaching for a key.
+    if (shift) {
+      if (pressed) {
+        // Read the live position rather than trusting the last move event,
+        // which may not have fired if the click landed without motion.
+        glfwGetCursorPos(window_, &cursorX_, &cursorY_);
+        pickUnderCursor();
+      }
+      dragOrbit_ = false;
+      dragPan_ = false;
+      return;
+    }
+
     if (pressed) {
       const double now = glfwGetTime();
       // GLFW reports presses, not double-clicks, so the interval is
       // measured here. 0.35 s is the usual system threshold.
       if (now - lastClickTime_ < 0.35) {
+        glfwGetCursorPos(window_, &cursorX_, &cursorY_);
         pickUnderCursor();
         if (hasSelection_ && open_.cloud != nullptr && selectedPoint_ < open_.cloud->size()) {
           camera_.focusOn(open_.cloud->positions[selectedPoint_]);
@@ -216,11 +246,7 @@ void Viewer::onMouseButton(int button, int action, int /*mods*/) {
       }
       lastClickTime_ = now;
     }
-    const bool shift = glfwGetKey(window_, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
-                       glfwGetKey(window_, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
-    // Shift-drag pans, matching the convention in most 3D tools.
-    if (shift) dragPan_ = pressed;
-    else dragOrbit_ = pressed;
+    dragOrbit_ = pressed;
   } else if (button == GLFW_MOUSE_BUTTON_MIDDLE || button == GLFW_MOUSE_BUTTON_RIGHT) {
     dragPan_ = pressed;
   }
@@ -238,7 +264,8 @@ void Viewer::onCursorMove(double x, double y) {
     camera_.orbit(static_cast<float>(-dx * kOrbitRadiansPerPixel),
                   static_cast<float>(dy * kOrbitRadiansPerPixel));
   } else if (dragPan_) {
-    camera_.pan(static_cast<float>(dx), static_cast<float>(dy), static_cast<float>(height_));
+    camera_.pan(static_cast<float>(dx), static_cast<float>(dy),
+                static_cast<float>(viewport().height));
   }
 }
 
@@ -256,7 +283,9 @@ void Viewer::onKey(int key, int /*scancode*/, int action, int /*mods*/) {
   // Let text fields receive characters rather than triggering shortcuts.
   if (ui_.wantsKeyboard()) return;
 
-  const float aspect = static_cast<float>(width_) / static_cast<float>(std::max(1, height_));
+  const Ui::ViewportRect rect = viewport();
+  const float aspect =
+      static_cast<float>(rect.width) / static_cast<float>(std::max(1, rect.height));
   switch (key) {
     case GLFW_KEY_ESCAPE: wantsClose_ = true; break;
     case GLFW_KEY_1: camera_.setMode(NavMode::Orbit, aspect); break;
@@ -338,11 +367,19 @@ PickedPoint Viewer::resolvePick(std::uint32_t index, float distance) const {
 void Viewer::pickUnderCursor() {
   std::uint32_t index = 0;
   float distance = 0.0f;
-  const int mx = static_cast<int>(cursorX_);
-  // GLFW's cursor origin is top-left; GL's viewport origin is bottom-left.
-  const int my = height_ - static_cast<int>(cursorY_);
+  const Ui::ViewportRect rect = viewport();
+  // GLFW's cursor origin is top-left; GL's is bottom-left. The result is
+  // then made relative to the viewport, since that is the rectangle the
+  // scene was rendered into.
+  const int mx = static_cast<int>(cursorX_) - rect.x;
+  const int my = (height_ - static_cast<int>(cursorY_)) - rect.y;
+  if (mx < 0 || my < 0 || mx >= rect.width || my >= rect.height) {
+    hasSelection_ = false;
+    ui_.clearSelection();
+    return;
+  }
 
-  if (!renderer_.pick(camera_, width_, height_, mx, my, index, distance)) {
+  if (!renderer_.pick(camera_, rect.width, rect.height, mx, my, index, distance)) {
     hasSelection_ = false;
     ui_.clearSelection();
     return;
@@ -360,7 +397,9 @@ void Viewer::pickUnderCursor() {
 }
 
 void Viewer::applyUiActions(const UiActions& actions) {
-  const float aspect = static_cast<float>(width_) / static_cast<float>(std::max(1, height_));
+  const Ui::ViewportRect rect = viewport();
+  const float aspect =
+      static_cast<float>(rect.width) / static_cast<float>(std::max(1, rect.height));
 
   if (!actions.openPath.empty()) openFile(actions.openPath);
   if (actions.frameAll && open_.cloud != nullptr)
@@ -389,7 +428,7 @@ void Viewer::buildOverlay() {
   overlay_.begin();
   if (open_.cloud == nullptr) return;
 
-  const float viewportHeight = static_cast<float>(std::max(1, height_));
+  const float viewportHeight = static_cast<float>(std::max(1, viewport().height));
   const Vec3f eye = camera_.position();
   // Markers are sized in world units but chosen so they come out a fixed
   // number of pixels across, whatever the camera distance.
@@ -428,10 +467,29 @@ void Viewer::buildOverlay() {
   }
 }
 
+void Viewer::consumePendingFrame() {
+  if (!pendingFrameAll_ || open_.cloud == nullptr) return;
+  pendingFrameAll_ = false;
+  const Ui::ViewportRect rect = viewport();
+  camera_.frameBounds(open_.cloud->boundsLocal,
+                      static_cast<float>(rect.width) /
+                          static_cast<float>(std::max(1, rect.height)));
+  if (startZoom_ != 1.0f && startZoom_ > 0.0f) {
+    camera_.distance /= startZoom_;
+    camera_.orthoHeight /= startZoom_;
+  }
+}
+
+Ui::ViewportRect Viewer::viewport() const {
+  return ui_.viewportRect(width_, height_);
+}
+
 void Viewer::renderFrame() {
-  renderer_.render(camera_, width_, height_, settings_);
+  const Ui::ViewportRect rect = viewport();
+  renderer_.render(camera_, rect.x, rect.y, rect.width, rect.height, settings_);
   buildOverlay();
-  overlay_.draw(camera_, width_, height_);
+  glViewport(rect.x, rect.y, rect.width, rect.height);
+  overlay_.draw(camera_, rect.width, rect.height);
 }
 
 bool Viewer::saveScreenshot(const std::string& path) {
@@ -522,6 +580,7 @@ int Viewer::run(const ViewerOptions& options) {
   camera_.mode = options.nav;
   startZoom_ = options.zoom;
   cropFraction_ = options.cropFraction;
+  if (options.haveStandardView) camera_.setStandardView(options.standardView);
   if (options.haveYaw) camera_.yaw = static_cast<float>(radians(options.yawDegrees));
   if (options.havePitch) camera_.pitch = static_cast<float>(radians(options.pitchDegrees));
 
@@ -571,6 +630,7 @@ int Viewer::run(const ViewerOptions& options) {
                                                                  : Vec3{0, 0, 0},
                                   width_, height_);
       ui_.endFrame();
+      consumePendingFrame();
       // Read from the back buffer on the final pass rather than swapping,
       // so the capture is the frame just drawn.
       if (i + 1 < frames) glfwSwapBuffers(window_);
@@ -626,6 +686,7 @@ int Viewer::run(const ViewerOptions& options) {
     glfwSwapBuffers(window_);
 
     applyUiActions(actions);
+    consumePendingFrame();
 
     statsTimer += delta;
     if (statsTimer > 2.0) {
