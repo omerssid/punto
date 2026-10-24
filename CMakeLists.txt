@@ -99,6 +99,7 @@ add_library(pcv_gpu STATIC
   src/gpu/gl.cpp
   src/gpu/shader.cpp
   src/gpu/point_renderer.cpp
+  src/gpu/overlay_renderer.cpp
   src/scene/camera.cpp
   ${PCV_EMBEDDED_SHADERS}
 )

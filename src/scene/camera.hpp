@@ -53,6 +53,9 @@ class Camera {
 
   // Pixels per metre at `distance`, used for splat sizing and LOD.
   float projectionScale(float viewportHeight) const;
+  // World size of one pixel at `distance`. Lets an overlay marker keep a
+  // constant size on screen however far away the thing it marks is.
+  float worldPerPixel(float distance, float viewportHeight) const;
   float orthoPixelsPerMetre(float viewportHeight) const;
 
   // ------------------------------------------------------------ controls

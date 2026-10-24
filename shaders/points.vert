@@ -30,6 +30,9 @@ uniform float uOrthoPixelsPerMetre;
 uniform int uFixedSize;          // ignore distance; draw every point the same
 uniform vec4 uClipPlane;
 uniform int uClipEnabled;
+uniform vec3 uCropMin;
+uniform vec3 uCropMax;
+uniform int uCropEnabled;
 uniform float uScalarGamma;
 
 out vec3 vColor;
@@ -49,9 +52,12 @@ void main() {
   vec3 local = dequantizePosition(positions[pointId], chunk);
   gl_Position = uViewProj * vec4(local, 1.0);
 
-  // Per-point clipping. The cull pass already dropped chunks entirely on the
-  // far side; this handles the chunks the plane cuts through.
-  if (uClipEnabled != 0 && dot(uClipPlane.xyz, local) + uClipPlane.w < 0.0) {
+  // Per-point clipping and cropping. The cull pass already dropped chunks
+  // wholly outside; this handles the ones the boundary cuts through.
+  bool clipped = uClipEnabled != 0 && dot(uClipPlane.xyz, local) + uClipPlane.w < 0.0;
+  bool cropped = uCropEnabled != 0 &&
+                 (any(lessThan(local, uCropMin)) || any(greaterThan(local, uCropMax)));
+  if (clipped || cropped) {
     // Push behind the near plane so the point is discarded without a branch
     // in the fragment stage.
     gl_Position = vec4(0.0, 0.0, -1.0, 0.0);

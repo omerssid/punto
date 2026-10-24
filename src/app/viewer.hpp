@@ -2,10 +2,12 @@
 #pragma once
 
 #include <memory>
+#include <utility>
 #include <string>
 #include <vector>
 
 #include "app/gpu_select.hpp"
+#include "gpu/overlay_renderer.hpp"
 #include "gpu/point_renderer.hpp"
 #include "io/loader.hpp"
 #include "scene/camera.hpp"
@@ -49,6 +51,10 @@ struct ViewerOptions {
   // exercised without an interactive session. Negative means no pick.
   int pickX = -1;
   int pickY = -1;
+  // Screen positions to pick in measure mode, in order.
+  std::vector<std::pair<int, int>> measureAt;
+  // Crop to this fraction of the cloud's bounds about its centre, 0 = off.
+  float cropFraction = 0.0f;
 
   LoadOptions loadOptions;
   ChunkBuildOptions chunkOptions;
@@ -91,6 +97,7 @@ class Viewer {
   void onFileDrop(int count, const char** paths);
 
   void applyUiActions(const UiActions& actions);
+  void buildOverlay();
   void pickUnderCursor();
   PickedPoint resolvePick(std::uint32_t index, float distance) const;
 
@@ -101,6 +108,7 @@ class Viewer {
   int height_ = 0;
 
   PointRenderer renderer_;
+  OverlayRenderer overlay_;
   Ui ui_;
   Camera camera_;
   RenderSettings settings_;
@@ -108,6 +116,7 @@ class Viewer {
   GlDeviceInfo device_;
 
   // Input state.
+  double lastClickTime_ = 0.0;
   bool dragOrbit_ = false;
   bool dragPan_ = false;
   double lastCursorX_ = 0.0;
@@ -129,6 +138,7 @@ class Viewer {
   bool wantsClose_ = false;
   bool colorModeExplicit_ = false;
   float startZoom_ = 1.0f;
+  float cropFraction_ = 0.0f;
   std::string requestedField_;
   int activeScalarField_ = -1;
   double activeScalarLo_ = 0.0;

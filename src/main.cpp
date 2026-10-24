@@ -35,6 +35,8 @@ void usage() {
       "  --field NAME              scalar field to colour by\n"
       "  --ramp NAME               viridis|turbo|grayscale|coolwarm|plasma|spectral\n"
       "  --pick X,Y                pick at this screen position before capturing\n"
+      "  --measure X,Y             add a measurement point (repeatable)\n"
+      "  --crop F                  crop to fraction F of the cloud's bounds\n"
       "  --chunk-size N            max points per chunk (default 131072)\n"
       "  --keep-invalid            keep points with NaN/Inf coordinates\n"
       "  --threads N               worker threads for loading\n"
@@ -43,6 +45,7 @@ void usage() {
       "\n"
       "controls:\n"
       "  left drag        orbit            shift+left / middle / right drag   pan\n"
+      "  double click     pick and focus   Tab  show/hide panels\n"
       "  scroll           zoom             1 / 2 / 3   orbit / fly / top-down\n"
       "  W A S D Q E      fly              shift / alt  faster / slower\n"
       "  F  frame all     P  pick point    L  toggle LOD    E  toggle EDL\n"
@@ -117,6 +120,21 @@ int main(int argc, char** argv) {
       continue;
     }
     if (arg == "--field" && i + 1 < argc) { options.fieldName = argv[++i]; continue; }
+    if (arg == "--measure" && i + 1 < argc) {
+      const std::string v = argv[++i];
+      const std::size_t comma = v.find(',');
+      if (comma == std::string::npos) {
+        std::fprintf(stderr, "--measure expects X,Y\n");
+        return 2;
+      }
+      options.measureAt.emplace_back(std::atoi(v.substr(0, comma).c_str()),
+                                     std::atoi(v.substr(comma + 1).c_str()));
+      continue;
+    }
+    if (arg == "--crop" && i + 1 < argc) {
+      options.cropFraction = static_cast<float>(std::atof(argv[++i]));
+      continue;
+    }
     if (arg == "--pick" && i + 1 < argc) {
       const std::string v = argv[++i];
       const std::size_t comma = v.find(',');

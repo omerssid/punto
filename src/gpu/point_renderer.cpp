@@ -306,6 +306,12 @@ void PointRenderer::runCull(const Camera& camera, int width, int height,
   cullProgram_.set("uClipEnabled", settings.clipEnabled ? 1 : 0);
   cullProgram_.set("uClipPlane", settings.clipPlane.x, settings.clipPlane.y, settings.clipPlane.z,
                    settings.clipPlane.w);
+  const bool cropActive = settings.cropEnabled && settings.cropBox.valid();
+  cullProgram_.set("uCropEnabled", cropActive ? 1 : 0);
+  if (cropActive) {
+    cullProgram_.set("uCropMin", settings.cropBox.lo);
+    cullProgram_.set("uCropMax", settings.cropBox.hi);
+  }
 
   const GLuint groups =
       (static_cast<GLuint>(source_->chunkCount()) + kCullGroupSize - 1) / kCullGroupSize;
@@ -379,6 +385,12 @@ void PointRenderer::render(const Camera& camera, int width, int height,
   pointProgram_.set("uClipEnabled", settings.clipEnabled ? 1 : 0);
   pointProgram_.set("uClipPlane", settings.clipPlane.x, settings.clipPlane.y, settings.clipPlane.z,
                     settings.clipPlane.w);
+  const bool drawCrop = settings.cropEnabled && settings.cropBox.valid();
+  pointProgram_.set("uCropEnabled", drawCrop ? 1 : 0);
+  if (drawCrop) {
+    pointProgram_.set("uCropMin", settings.cropBox.lo);
+    pointProgram_.set("uCropMax", settings.cropBox.hi);
+  }
 
   glBindVertexArray(emptyVao_);
   drawCommands_.bind(GL_DRAW_INDIRECT_BUFFER);
@@ -420,6 +432,13 @@ void PointRenderer::render(const Camera& camera, int width, int height,
   glBindVertexArray(emptyVao_);
   glDrawArrays(GL_TRIANGLES, 0, 3);
   glEndQuery(GL_TIME_ELAPSED);
+
+  // Remembered so a pick, which runs its own cull, hides what the last
+  // visible frame hid.
+  lastClipEnabled_ = settings.clipEnabled;
+  lastClipPlane_ = settings.clipPlane;
+  lastCropEnabled_ = settings.cropEnabled;
+  lastCropBox_ = settings.cropBox;
 
   glBindVertexArray(0);
   readbackStats();
@@ -486,7 +505,12 @@ bool PointRenderer::pick(const Camera& camera, int width, int height, int mouseX
   }
 
   const float aspect = static_cast<float>(width) / static_cast<float>(std::max(1, height));
-  RenderSettings pickSettings;  // defaults are fine; only geometry matters
+  // Crop and clip carry over, so a hidden point cannot be picked.
+  RenderSettings pickSettings;
+  pickSettings.clipEnabled = lastClipEnabled_;
+  pickSettings.clipPlane = lastClipPlane_;
+  pickSettings.cropEnabled = lastCropEnabled_;
+  pickSettings.cropBox = lastCropBox_;
   bindPointBuffers();
   runCull(camera, width, height, pickSettings);
 
@@ -516,7 +540,15 @@ bool PointRenderer::pick(const Camera& camera, int width, int height, int mouseX
                    camera.orthoPixelsPerMetre(static_cast<float>(height)));
   pickProgram_.set("uFixedSize", 0);
   pickProgram_.set("uRoundPoints", 1);
-  pickProgram_.set("uClipEnabled", 0);
+  pickProgram_.set("uClipEnabled", pickSettings.clipEnabled ? 1 : 0);
+  pickProgram_.set("uClipPlane", pickSettings.clipPlane.x, pickSettings.clipPlane.y,
+                   pickSettings.clipPlane.z, pickSettings.clipPlane.w);
+  const bool pickCrop = pickSettings.cropEnabled && pickSettings.cropBox.valid();
+  pickProgram_.set("uCropEnabled", pickCrop ? 1 : 0);
+  if (pickCrop) {
+    pickProgram_.set("uCropMin", pickSettings.cropBox.lo);
+    pickProgram_.set("uCropMax", pickSettings.cropBox.hi);
+  }
   pickProgram_.set("uScalarGamma", 1.0f);
 
   glBindVertexArray(emptyVao_);

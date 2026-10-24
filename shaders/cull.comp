@@ -51,6 +51,11 @@ uniform float uOrthoPixelsPerMetre;
 uniform vec4 uClipPlane;
 uniform int uClipEnabled;
 
+// Axis-aligned crop region, in the cloud's local frame.
+uniform vec3 uCropMin;
+uniform vec3 uCropMax;
+uniform int uCropEnabled;
+
 // Conservative AABB-vs-plane test using the "positive vertex": the corner
 // furthest along the plane normal. If even that corner is behind the plane,
 // every corner is, and the box cannot intersect the frustum.
@@ -78,6 +83,14 @@ void main() {
   if (!insideFrustum(lo, hi)) {
     atomicAdd(culledChunks, 1u);
     return;
+  }
+
+  if (uCropEnabled != 0) {
+    // Two boxes miss each other if they are separated along any one axis.
+    if (any(greaterThan(lo, uCropMax)) || any(lessThan(hi, uCropMin))) {
+      atomicAdd(culledChunks, 1u);
+      return;
+    }
   }
 
   if (uClipEnabled != 0) {

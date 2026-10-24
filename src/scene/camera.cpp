@@ -167,6 +167,12 @@ float Camera::projectionScale(float viewportHeight) const {
   return viewportHeight / (2.0f * std::tan(fovY * 0.5f));
 }
 
+float Camera::worldPerPixel(float distance, float viewportHeight) const {
+  if (viewportHeight <= 0.0f) return 0.0f;
+  if (mode == NavMode::TopDown) return orthoHeight / viewportHeight;
+  return 2.0f * std::max(distance, 1e-4f) * std::tan(fovY * 0.5f) / viewportHeight;
+}
+
 float Camera::orthoPixelsPerMetre(float viewportHeight) const {
   return orthoHeight > 0.0f ? viewportHeight / orthoHeight : 1.0f;
 }

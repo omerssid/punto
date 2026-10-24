@@ -57,6 +57,12 @@ struct RenderSettings {
 
   bool clipEnabled = false;
   Vec4f clipPlane{0.0f, 0.0f, 1.0f, 0.0f};
+
+  // Axis-aligned crop, in the cloud's local frame. Chunks wholly outside
+  // are rejected by the cull pass, so cropping makes rendering faster as
+  // well as clearer.
+  bool cropEnabled = false;
+  Aabbf cropBox;
 };
 
 struct RenderStats {
@@ -166,6 +172,13 @@ class PointRenderer {
   int scalarField_ = -1;
   double scalarLo_ = 0.0;
   double scalarHi_ = 1.0;
+
+  // Mirrors of the last rendered frame's hiding state, so picking agrees
+  // with what is on screen.
+  bool lastClipEnabled_ = false;
+  Vec4f lastClipPlane_{0.0f, 0.0f, 1.0f, 0.0f};
+  bool lastCropEnabled_ = false;
+  Aabbf lastCropBox_;
 
   bool hasIndirectCount_ = false;
   bool initialized_ = false;

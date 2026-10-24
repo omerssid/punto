@@ -10,6 +10,7 @@
 
 #include "core/log.hpp"
 #include "gpu/gl.hpp"
+#include "gpu/overlay_renderer.hpp"
 #include "gpu/shader.hpp"
 
 namespace pcv {
@@ -170,6 +171,15 @@ bool Viewer::openFile(const std::string& path) {
   const float aspect = static_cast<float>(width_) / static_cast<float>(std::max(1, height_));
   camera_.frameBounds(open_.cloud->boundsLocal, aspect);
 
+  if (cropFraction_ > 0.0f && open_.cloud->boundsLocal.valid()) {
+    const Aabbf& b = open_.cloud->boundsLocal;
+    const Vec3f centre = b.center();
+    const Vec3f half = b.size() * (0.5f * cropFraction_);
+    settings_.cropBox.lo = centre - half;
+    settings_.cropBox.hi = centre + half;
+    settings_.cropEnabled = true;
+  }
+
   if (startZoom_ != 1.0f && startZoom_ > 0.0f) {
     camera_.distance /= startZoom_;
     camera_.orthoHeight /= startZoom_;
@@ -192,6 +202,20 @@ void Viewer::onMouseButton(int button, int action, int /*mods*/) {
   if (action == GLFW_PRESS && ui_.wantsMouse()) return;
   const bool pressed = action == GLFW_PRESS;
   if (button == GLFW_MOUSE_BUTTON_LEFT) {
+    if (pressed) {
+      const double now = glfwGetTime();
+      // GLFW reports presses, not double-clicks, so the interval is
+      // measured here. 0.35 s is the usual system threshold.
+      if (now - lastClickTime_ < 0.35) {
+        pickUnderCursor();
+        if (hasSelection_ && open_.cloud != nullptr && selectedPoint_ < open_.cloud->size()) {
+          camera_.focusOn(open_.cloud->positions[selectedPoint_]);
+          lastClickTime_ = 0.0;  // a triple click should not re-trigger
+          return;
+        }
+      }
+      lastClickTime_ = now;
+    }
     const bool shift = glfwGetKey(window_, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
                        glfwGetKey(window_, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
     // Shift-drag pans, matching the convention in most 3D tools.
@@ -248,8 +272,11 @@ void Viewer::onKey(int key, int /*scancode*/, int action, int /*mods*/) {
       break;
     case GLFW_KEY_R: {
       std::string error;
-      if (renderer_.reloadShaders(error)) logInfo("shaders reloaded");
-      else logError("shader reload failed: {}", error);
+      std::string overlayError;
+      const bool pointsOk = renderer_.reloadShaders(error);
+      const bool overlayOk = overlay_.reloadShaders(overlayError);
+      if (pointsOk && overlayOk) logInfo("shaders reloaded");
+      else logError("shader reload failed: {}", pointsOk ? overlayError : error);
       break;
     }
     case GLFW_KEY_P: pickUnderCursor(); break;
@@ -347,15 +374,64 @@ void Viewer::applyUiActions(const UiActions& actions) {
     activeScalarLo_ = actions.scalarLo;
     activeScalarHi_ = actions.scalarHi;
   }
+  if (actions.clearMeasurement) ui_.clearMeasurement();
   if (actions.reloadShaders) {
     std::string error;
-    if (renderer_.reloadShaders(error)) logInfo("shaders reloaded");
-    else logError("shader reload failed: {}", error);
+    const bool pointsOk = renderer_.reloadShaders(error);
+    std::string overlayError;
+    const bool overlayOk = overlay_.reloadShaders(overlayError);
+    if (pointsOk && overlayOk) logInfo("shaders reloaded");
+    else logError("shader reload failed: {}", pointsOk ? overlayError : error);
+  }
+}
+
+void Viewer::buildOverlay() {
+  overlay_.begin();
+  if (open_.cloud == nullptr) return;
+
+  const float viewportHeight = static_cast<float>(std::max(1, height_));
+  const Vec3f eye = camera_.position();
+  // Markers are sized in world units but chosen so they come out a fixed
+  // number of pixels across, whatever the camera distance.
+  auto markerRadius = [&](const Vec3f& at, float pixels) {
+    return camera_.worldPerPixel(length(at - eye), viewportHeight) * pixels;
+  };
+
+  constexpr std::uint32_t kSelection = overlayColor(255, 214, 92);
+  constexpr std::uint32_t kMeasure = overlayColor(120, 220, 255);
+  constexpr std::uint32_t kCrop = overlayColor(130, 200, 150, 180);
+
+  if (settings_.cropEnabled && settings_.cropBox.valid())
+    overlay_.addBox(settings_.cropBox, kCrop);
+
+  const std::vector<PickedPoint>& measured = ui_.measurementPoints();
+  for (const PickedPoint& p : measured) {
+    if (!p.valid || p.index >= open_.cloud->size()) continue;
+    const Vec3f local = open_.cloud->positions[p.index];
+    overlay_.addMarker(local, markerRadius(local, 7.0f), kMeasure, camera_);
+  }
+  for (std::size_t i = 1; i < measured.size(); ++i) {
+    if (measured[i - 1].index >= open_.cloud->size() ||
+        measured[i].index >= open_.cloud->size())
+      continue;
+    const Vec3f a = open_.cloud->positions[measured[i - 1].index];
+    const Vec3f b = open_.cloud->positions[measured[i].index];
+    // Dashed, so the line reads as a measurement rather than as geometry.
+    const float dash = camera_.worldPerPixel(length((a + b) * 0.5f - eye), viewportHeight) * 8.0f;
+    overlay_.addDashedLine(a, b, kMeasure, dash);
+  }
+
+  const PickedPoint& selection = ui_.selection();
+  if (selection.valid && selection.index < open_.cloud->size()) {
+    const Vec3f local = open_.cloud->positions[selection.index];
+    overlay_.addMarker(local, markerRadius(local, 11.0f), kSelection, camera_);
   }
 }
 
 void Viewer::renderFrame() {
   renderer_.render(camera_, width_, height_, settings_);
+  buildOverlay();
+  overlay_.draw(camera_, width_, height_);
 }
 
 bool Viewer::saveScreenshot(const std::string& path) {
@@ -428,6 +504,10 @@ int Viewer::run(const ViewerOptions& options) {
     logError("renderer init failed: {}", error);
     return 1;
   }
+  if (!overlay_.initialize(error)) {
+    logError("overlay init failed: {}", error);
+    return 1;
+  }
   // The benchmark measures the renderer, so it runs without the UI.
   // Screenshots keep it, which is how the panels get verified.
   const bool headless = options.benchmark;
@@ -441,6 +521,7 @@ int Viewer::run(const ViewerOptions& options) {
   requestedField_ = options.fieldName;
   camera_.mode = options.nav;
   startZoom_ = options.zoom;
+  cropFraction_ = options.cropFraction;
   if (options.haveYaw) camera_.yaw = static_cast<float>(radians(options.yawDegrees));
   if (options.havePitch) camera_.pitch = static_cast<float>(radians(options.pitchDegrees));
 
@@ -458,6 +539,15 @@ int Viewer::run(const ViewerOptions& options) {
       cursorX_ = options.pickX;
       cursorY_ = options.pickY;
       pickUnderCursor();
+    }
+    if (!options.measureAt.empty()) {
+      renderFrame();
+      ui_.setMeasureMode(true);
+      for (const auto& [mx, my] : options.measureAt) {
+        cursorX_ = mx;
+        cursorY_ = my;
+        pickUnderCursor();
+      }
     }
     for (int i = 0; i < frames; ++i) {
       glfwPollEvents();
@@ -477,6 +567,9 @@ int Viewer::run(const ViewerOptions& options) {
       uiInput.scalarHi = activeScalarHi_;
       ui_.draw(uiInput, settings_, camera_);
       renderFrame();
+      ui_.drawViewportAnnotations(camera_, open_.cloud != nullptr ? open_.cloud->origin
+                                                                 : Vec3{0, 0, 0},
+                                  width_, height_);
       ui_.endFrame();
       // Read from the back buffer on the final pass rather than swapping,
       // so the capture is the frame just drawn.
@@ -526,6 +619,9 @@ int Viewer::run(const ViewerOptions& options) {
     // The 3D pass clears and owns the default framebuffer, so it has to run
     // before ImGui's draw data is submitted on top of it.
     renderFrame();
+    ui_.drawViewportAnnotations(camera_, open_.cloud != nullptr ? open_.cloud->origin
+                                                               : Vec3{0, 0, 0},
+                                width_, height_);
     ui_.endFrame();
     glfwSwapBuffers(window_);
 

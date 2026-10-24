@@ -321,6 +321,46 @@ void Ui::addMeasurementPoint(const PickedPoint& point) {
   measurePoints_.push_back(point);
 }
 
+void Ui::drawViewportAnnotations(const Camera& camera, const Vec3& origin, int width,
+                                 int height) {
+  if (!initialized_ || measurePoints_.size() < 2) return;
+
+  const float aspect = static_cast<float>(width) / static_cast<float>(std::max(1, height));
+  const Mat4 viewProj = camera.viewProjection(aspect);
+
+  // World to screen. Returns false behind the camera, where the perspective
+  // divide would mirror the point to the wrong side of the viewport.
+  auto project = [&](const Vec3& world, ImVec2& out) {
+    const Vec3 local = world - origin;
+    const Vec4f clip = viewProj * Vec4f{static_cast<float>(local.x), static_cast<float>(local.y),
+                                        static_cast<float>(local.z), 1.0f};
+    if (clip.w <= 1e-6f) return false;
+    out.x = (clip.x / clip.w * 0.5f + 0.5f) * static_cast<float>(width);
+    out.y = (1.0f - (clip.y / clip.w * 0.5f + 0.5f)) * static_cast<float>(height);
+    return true;
+  };
+
+  ImDrawList* draw = ImGui::GetForegroundDrawList();
+  for (std::size_t i = 1; i < measurePoints_.size(); ++i) {
+    const Vec3 a = measurePoints_[i - 1].world;
+    const Vec3 b = measurePoints_[i].world;
+    ImVec2 mid;
+    if (!project((a + b) * 0.5, mid)) continue;
+
+    char label[64];
+    std::snprintf(label, sizeof(label), "%.3f m", length(b - a));
+    const ImVec2 size = ImGui::CalcTextSize(label);
+    const ImVec2 pad(6.0f, 3.0f);
+    // A filled plate behind the text, or the label vanishes against a
+    // bright patch of cloud.
+    draw->AddRectFilled(ImVec2(mid.x - size.x * 0.5f - pad.x, mid.y - size.y * 0.5f - pad.y),
+                        ImVec2(mid.x + size.x * 0.5f + pad.x, mid.y + size.y * 0.5f + pad.y),
+                        IM_COL32(20, 22, 28, 220), 3.0f);
+    draw->AddText(ImVec2(mid.x - size.x * 0.5f, mid.y - size.y * 0.5f),
+                  IM_COL32(255, 228, 140, 255), label);
+  }
+}
+
 // ------------------------------------------------------------------ draw
 
 UiActions Ui::draw(const UiInput& input, RenderSettings& settings, Camera& camera) {
@@ -833,16 +873,59 @@ void Ui::drawDisplayPanel(const UiInput& input, RenderSettings& settings, UiActi
     settings.background = Vec3f{bg[0], bg[1], bg[2]};
 
   ImGui::Checkbox("Clip plane", &settings.clipEnabled);
-  helpMarker("Hides everything below the plane. Useful for slicing into a map.");
+  helpMarker("Hides everything below a horizontal plane. Useful for lifting a "
+             "roof off, or dropping the ground away.");
   if (settings.clipEnabled && cloud != nullptr && cloud->boundsLocal.valid()) {
     const Aabbf& b = cloud->boundsLocal;
     // Expressed as a height, which is what you actually want on a Z-up map.
     float height = -settings.clipPlane.w;
     fieldLabel("Height");
-    if (ImGui::SliderFloat("##cliph", &height, b.lo.z, b.hi.z, "%.2f m")) {
+    if (ImGui::SliderFloat("##cliph", &height, b.lo.z, b.hi.z, "%.2f m"))
       settings.clipPlane = Vec4f{0.0f, 0.0f, 1.0f, -height};
-    }
     ImGui::TextDisabled("world Z = %.2f", height + cloud->origin.z);
+  }
+
+  ImGui::Checkbox("Crop box", &settings.cropEnabled);
+  helpMarker("Hides everything outside a box. Chunks wholly outside are rejected "
+             "by the culling pass, so cropping makes rendering faster as well as "
+             "clearer.");
+  if (settings.cropEnabled && cloud != nullptr && cloud->boundsLocal.valid()) {
+    const Aabbf& bounds = cloud->boundsLocal;
+    // Start as the whole cloud, so enabling it changes nothing until moved.
+    if (!settings.cropBox.valid()) settings.cropBox = bounds;
+
+    static const char* axisNames[] = {"X", "Y", "Z"};
+    for (int axis = 0; axis < 3; ++axis) {
+      float lo = settings.cropBox.lo[axis];
+      float hi = settings.cropBox.hi[axis];
+      fieldLabel(axisNames[axis]);
+      // One widget per axis with both ends, which is how a range reads.
+      if (ImGui::DragFloatRange2(("##crop" + std::string(axisNames[axis])).c_str(), &lo, &hi,
+                                 std::max(0.01f, bounds.size()[axis] * 0.002f), bounds.lo[axis],
+                                 bounds.hi[axis], "%.2f", "%.2f",
+                                 ImGuiSliderFlags_AlwaysClamp)) {
+        settings.cropBox.lo[axis] = lo;
+        settings.cropBox.hi[axis] = hi;
+      }
+    }
+
+    if (ImGui::Button("Whole cloud")) settings.cropBox = bounds;
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!selection_.valid || cloud == nullptr);
+    if (ImGui::Button("Around selection")) {
+      // A box of a fixed fraction of the scene around the picked point,
+      // which is almost always what you want after picking something.
+      const float reach = std::max(1.0f, maxComponent(bounds.size()) * 0.04f);
+      const Vec3f centre{static_cast<float>(selection_.world.x - cloud->origin.x),
+                         static_cast<float>(selection_.world.y - cloud->origin.y),
+                         static_cast<float>(selection_.world.z - cloud->origin.z)};
+      settings.cropBox.lo = centre - Vec3f(reach);
+      settings.cropBox.hi = centre + Vec3f(reach);
+    }
+    ImGui::EndDisabled();
+
+    const Vec3f size = settings.cropBox.size();
+    ImGui::TextDisabled("%.1f x %.1f x %.1f m", size.x, size.y, size.z);
   }
 
   ImGui::End();
@@ -866,6 +949,8 @@ void Ui::drawInspectorPanel(const UiInput& input, UiActions& actions) {
     measurePoints_.clear();
     actions.clearMeasurement = true;
   }
+  ImGui::SameLine();
+  ImGui::TextDisabled("%zu picked", measurePoints_.size());
   ImGui::TextDisabled("press P to pick the point under the cursor");
   ImGui::Separator();
 
@@ -1172,6 +1257,7 @@ void Ui::drawHelpWindow() {
       {"shift / alt while flying", "faster / slower"},
       {"F", "frame the whole cloud"},
       {"G", "focus on the selected point"},
+      {"double click", "pick and focus in one gesture"},
   };
   static const Row display[] = {
       {"P", "pick the point under the cursor"},

@@ -87,6 +87,14 @@ class Ui {
   // Measurement: successive picks extend the chain.
   void addMeasurementPoint(const PickedPoint& point);
   bool measureModeActive() const { return measureMode_; }
+  void setMeasureMode(bool on) { measureMode_ = on; }
+  const std::vector<PickedPoint>& measurementPoints() const { return measurePoints_; }
+  void clearMeasurement() { measurePoints_.clear(); }
+
+  // Draws distance labels over the viewport, projected from world space.
+  // Separate from draw() because it needs the final camera, after any
+  // changes the panels made this frame.
+  void drawViewportAnnotations(const Camera& camera, const Vec3& origin, int width, int height);
 
   bool panelsVisible() const { return panelsVisible_; }
   void togglePanels() { panelsVisible_ = !panelsVisible_; }
