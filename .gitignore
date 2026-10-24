@@ -3,3 +3,6 @@ build/
 compile_commands.json
 *.o
 tests/fixtures/
+
+# Claude Code machine-local settings
+.claude/settings.local.json
