@@ -130,10 +130,15 @@ add_executable(pcd_viewer
   src/main.cpp
   src/app/viewer.cpp
   src/app/gpu_select.cpp
+  src/app/stb_impl.cpp
   src/ui/ui.cpp
 )
 target_include_directories(pcd_viewer PRIVATE third_party/stb)
 target_link_libraries(pcd_viewer PRIVATE pcv_gpu pcv_imgui)
+
+# Vendored third-party code; its warnings are not ours to fix, and holding
+# it to -Werror would make the build hostage to future compiler releases.
+set_source_files_properties(src/app/stb_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
 if(XRANDR_INCLUDE_DIR AND XRANDR_LIBRARY)
   target_include_directories(pcd_viewer PRIVATE ${XRANDR_INCLUDE_DIR})
   target_link_libraries(pcd_viewer PRIVATE ${XRANDR_LIBRARY} ${X11_LIBRARY})

@@ -1,0 +1,196 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Distributed binaries must not be built with -march=native: the runner
+  # may have instructions the machine downloading them does not, and the
+  # result is a SIGILL on startup rather than a graceful failure.
+  CMAKE_FLAGS: >-
+    -DCMAKE_BUILD_TYPE=Release
+    -DPCV_NATIVE_ARCH=OFF
+    -DPCV_WERROR=ON
+
+jobs:
+  build:
+    name: build and test
+    # Deliberately older than ubuntu-latest. A binary links against the
+    # glibc it was built on and runs on that version or newer, so building
+    # on 22.04 (glibc 2.35) covers 22.04 and 24.04, while building on 24.04
+    # would not run on 22.04.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build \
+            libglfw3-dev libglew-dev libgl1-mesa-dev \
+            liblaszip-dev libxrandr-dev
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja ${{ env.CMAKE_FLAGS }}
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Generate test fixtures
+        # Writes the same helix in every encoding. The binary_compressed
+        # variant needs PCL, which is not installed here -- the generator
+        # skips it and the suite skips the matching comparison.
+        run: python3 tests/make_fixtures.py
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Smoke-test the binaries
+        # No GPU or display on the runner, so this only reaches the code
+        # paths before a GL context is needed. It still catches a broken
+        # link or a missing runtime symbol, which is most of what goes
+        # wrong between a green build and an unusable download.
+        run: |
+          ./build/pcd_viewer --help > /dev/null
+          ./build/pcv_probe tests/fixtures/helix_binary.pcd > /dev/null
+          ./build/pcv_probe tests/fixtures/helix_12_fmt3.laz > /dev/null
+          echo "binaries run"
+
+      - name: Package
+        id: package
+        run: |
+          # checkout is shallow and fetches no tags, so git describe would
+          # always fall back to a hash. The ref name is the tag when one is
+          # being built, so use that and the short hash otherwise.
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="$(git rev-parse --short HEAD)"
+          fi
+          name="pcd_viewer-${version}-linux-x86_64"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+          mkdir -p "dist/${name}"
+          cp build/pcd_viewer build/pcv_probe "dist/${name}/"
+          cp README.md "dist/${name}/"
+          strip "dist/${name}/pcd_viewer" "dist/${name}/pcv_probe"
+
+          # The binaries link against the system GL, GLFW, GLEW and laszip,
+          # so say exactly what a machine needs to run them.
+          cat > "dist/${name}/INSTALL.txt" <<'EOF'
+          pcd_viewer -- Linux x86_64
+
+          Built on Ubuntu 22.04 (glibc 2.35). Runs on Ubuntu 22.04 or newer,
+          and on other distributions with a comparable glibc.
+
+          Runtime dependencies:
+
+            sudo apt install libglfw3 libglew2.2 libgl1 libxrandr2 liblaszip8
+
+          liblaszip8 is only needed to open .laz files; everything else works
+          without it.
+
+          Then:
+
+            ./pcd_viewer your_cloud.pcd
+
+          These binaries are built without -march=native, so they run on any
+          x86-64 CPU. Building from source with the default settings produces
+          a faster binary tuned to your own machine.
+          EOF
+
+          tar -czf "${name}.tar.gz" -C dist "${name}"
+          sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256"
+          ls -la "${name}.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: |
+            ${{ steps.package.outputs.name }}.tar.gz
+            ${{ steps.package.outputs.name }}.tar.gz.sha256
+          retention-days: 30
+
+      - name: Publish rolling build
+        # Every push to the default branch replaces a single prerelease, so
+        # there is always a current binary to download without tagging.
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest \
+            --title "Latest build (${{ steps.package.outputs.version }})" \
+            --notes "Automatic build of \`${{ github.sha }}\`.
+
+          Built on Ubuntu 22.04, without \`-march=native\`, so it runs on any x86-64 CPU.
+
+          \`\`\`
+          sudo apt install libglfw3 libglew2.2 libgl1 libxrandr2 liblaszip8
+          \`\`\`
+
+          See \`INSTALL.txt\` in the archive." \
+            --prerelease \
+            --target "${{ github.sha }}" \
+            "${{ steps.package.outputs.name }}.tar.gz" \
+            "${{ steps.package.outputs.name }}.tar.gz.sha256"
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            "${{ steps.package.outputs.name }}.tar.gz" \
+            "${{ steps.package.outputs.name }}.tar.gz.sha256"
+
+  build-minimal:
+    name: build without optional dependencies
+    # The LAZ and PRIME-detection paths are behind compile-time feature
+    # checks. Building without them is the only way to know those branches
+    # still compile, and that the viewer degrades rather than breaks.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build \
+            libglfw3-dev libglew-dev libgl1-mesa-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja ${{ env.CMAKE_FLAGS }} 2>&1 | tee configure.log
+          # Fail loudly if the runner turns out to have laszip after all,
+          # because then this job is silently testing the same thing as the
+          # other one.
+          grep -q "laszip not found" configure.log
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Test
+        # The suite detects that this build has no laszip and asserts the
+        # refusal path instead of the decode path.
+        run: |
+          python3 tests/make_fixtures.py
+          ctest --test-dir build --output-on-failure
+
+      - name: LAS still reads without laszip
+        run: ./build/pcv_probe tests/fixtures/helix_12_fmt3.las | grep -q "LAS 1.2"

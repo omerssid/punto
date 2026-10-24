@@ -189,7 +189,7 @@ bool vertexBlockOffset(const PlyHeader& header, std::size_t vertexIndex, std::si
 // ASCII payloads are parsed into an interleaved scratch buffer and then run
 // through the same plan as a binary file, so there is one decode path.
 bool decodeAscii(std::string_view payload, const PlyElement& vertex, std::size_t recordStride,
-                 std::size_t pointCount, const LoadOptions& options, std::stop_token stop,
+                 std::size_t pointCount, std::stop_token stop,
                  std::vector<std::byte>& records, std::uint64_t& parsed,
                  std::vector<std::string>& warnings) {
   records.assign(recordStride * pointCount, std::byte{0});
@@ -336,7 +336,7 @@ LoadResult loadPly(const std::string& path, const LoadOptions& options, PointClo
     const std::string_view payload(file.chars() + header.payloadOffset,
                                    file.size() - header.payloadOffset);
     std::uint64_t parsed = 0;
-    if (!decodeAscii(payload, vertex, recordStride, pointCount, options, stop, scratch, parsed,
+    if (!decodeAscii(payload, vertex, recordStride, pointCount, stop, scratch, parsed,
                      result.warnings)) {
       result.cancelled = true;
       result.error = "load cancelled";

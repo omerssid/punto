@@ -13,6 +13,7 @@
 
 #include "io/cloud_builder.hpp"
 #include "io/loader.hpp"
+#include "io/laz_decode.hpp"
 #include "io/lzf.hpp"
 
 namespace {
@@ -65,6 +66,10 @@ std::filesystem::path fixtureDir() {
 }
 
 using namespace pcv;
+
+bool fixtureExists(const std::string& name) {
+  return std::filesystem::exists(fixtureDir() / name);
+}
 
 PointCloud load(const std::string& name, LoadOptions options = {}) {
   PointCloud cloud;
@@ -124,15 +129,24 @@ void testEncodingsAgree() {
   beginTest("every PCD encoding decodes to the same cloud");
   const PointCloud ascii = load("helix_ascii.pcd");
   const PointCloud binary = load("helix_binary.pcd");
-  const PointCloud compressed = load("helix_compressed.pcd");
   if (binary.empty()) return;
 
   CHECK_EQ(binary.size(), std::size_t{5000});
 
-  // Both hold the identical float32 bits, so this must match exactly.
-  expectSameCloud(binary, compressed, 0.0, "binary vs binary_compressed (PCL-written)");
   // ASCII went through a decimal round-trip, so allow a float32 ulp.
   expectSameCloud(binary, ascii, 1e-5, "binary vs ascii");
+
+  // The binary_compressed fixture is written by PCL, so it is only present
+  // where PCL is installed. Skipping rather than failing keeps the suite
+  // usable on a machine -- or a CI runner -- without it.
+  if (!fixtureExists("helix_compressed.pcd")) {
+    std::printf("  skipping binary_compressed (fixture needs PCL to generate)\n");
+    return;
+  }
+  const PointCloud compressed = load("helix_compressed.pcd");
+  if (compressed.empty()) return;
+  // Both hold the identical float32 bits, so this must match exactly.
+  expectSameCloud(binary, compressed, 0.0, "binary vs binary_compressed (PCL-written)");
 }
 
 void testFieldTypesPreserved() {
@@ -255,8 +269,9 @@ void testFormatDetection() {
   beginTest("format detection");
   CHECK_EQ(static_cast<int>(detectFormat((fixtureDir() / "helix_binary.pcd").string())),
            static_cast<int>(CloudFormat::Pcd));
-  CHECK_EQ(static_cast<int>(detectFormat((fixtureDir() / "helix_compressed.pcd").string())),
-           static_cast<int>(CloudFormat::Pcd));
+  if (fixtureExists("helix_compressed.pcd"))
+    CHECK_EQ(static_cast<int>(detectFormat((fixtureDir() / "helix_compressed.pcd").string())),
+             static_cast<int>(CloudFormat::Pcd));
   CHECK_EQ(static_cast<int>(detectFormat((fixtureDir() / "helix.bin").string())),
            static_cast<int>(CloudFormat::KittiBin));
   CHECK_EQ(static_cast<int>(detectFormat((fixtureDir() / "helix_le.ply").string())),
@@ -440,6 +455,10 @@ void testLasColorDepthHeuristic() {
 // those two paths from drifting.
 void testLazMatchesLas() {
   beginTest("LAZ decodes identically to the LAS it was compressed from");
+  if (!lazSupported()) {
+    std::printf("  skipping (this build has no laszip)\n");
+    return;
+  }
   const char* pairs[][2] = {
       {"helix_12_fmt3.las", "helix_12_fmt3.laz"},
       {"helix_14_fmt7.las", "helix_14_fmt7.laz"},
@@ -472,6 +491,10 @@ void testLazMatchesLas() {
 void testLazFormatName() {
   beginTest("LAZ reports itself as compressed");
   if (!std::filesystem::exists(fixtureDir() / "helix_12_fmt3.laz")) return;
+  if (!lazSupported()) {
+    std::printf("  skipping (this build has no laszip)\n");
+    return;
+  }
   const PointCloud laz = load("helix_12_fmt3.laz");
   if (laz.empty()) return;
   CHECK(laz.formatName.find("LAZ") != std::string::npos);
@@ -479,6 +502,32 @@ void testLazFormatName() {
   // by the extension, so a .laz named .las still reads correctly.
   CHECK_EQ(static_cast<int>(detectFormat((fixtureDir() / "helix_12_fmt3.laz").string())),
            static_cast<int>(CloudFormat::Las));
+}
+
+// A build without laszip must refuse a LAZ file cleanly and say what to do
+// about it, rather than crashing or returning an empty cloud that looks
+// like a corrupt file.
+void testLazWithoutLaszipIsRefusedGracefully() {
+  beginTest("a build without laszip refuses LAZ with instructions");
+  if (lazSupported()) {
+    std::printf("  skipping (this build has laszip)\n");
+    return;
+  }
+  if (!std::filesystem::exists(fixtureDir() / "helix_12_fmt3.laz")) return;
+
+  PointCloud cloud;
+  const LoadResult r =
+      loadPointCloud((fixtureDir() / "helix_12_fmt3.laz").string(), {}, cloud);
+  CHECK(!r.ok);
+  CHECK(!r.cancelled);
+  CHECK(cloud.empty());
+  // The message has to name the fix, not just the failure.
+  CHECK(r.error.find("laszip") != std::string::npos);
+
+  // And the uncompressed sibling must still read, so a missing optional
+  // dependency costs only the one format.
+  const PointCloud las = load("helix_12_fmt3.las");
+  CHECK_EQ(las.size(), std::size_t{5000});
 }
 
 void testGreyscaleDetection() {
@@ -530,6 +579,7 @@ int main() {
   testLasColorDepthHeuristic();
   testLazMatchesLas();
   testLazFormatName();
+  testLazWithoutLaszipIsRefusedGracefully();
   testGreyscaleDetection();
   testStatsAgainstKnownValues();
   testLzfEdgeCases();

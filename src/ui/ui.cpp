@@ -33,8 +33,6 @@ std::string humanBytes(std::uint64_t bytes) {
   return std::format("{:.1f} {}", v, units[u]);
 }
 
-ImVec4 toImVec4(const Vec3f& c, float a = 1.0f) { return ImVec4(c.x, c.y, c.z, a); }
-
 // A label/value row, so every panel lines up the same way.
 void labelValue(const char* label, const std::string& value) {
   ImGui::TableNextRow();
@@ -448,8 +446,13 @@ UiActions Ui::draw(const UiInput& input, RenderSettings& settings, Camera& camer
     layoutBuilt_ = true;
     if (ImGui::DockBuilderGetNode(dockspaceId) == nullptr || !layoutRestored_) {
       ImGui::DockBuilderRemoveNode(dockspaceId);
-      ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace |
-                                                 ImGuiDockNodeFlags_PassthruCentralNode);
+      // DockSpace is one of ImGui's private flags and PassthruCentralNode a
+      // public one; C++20 deprecates OR-ing distinct enumeration types, so
+      // combine them as the integer the API actually takes.
+      ImGui::DockBuilderAddNode(
+          dockspaceId, static_cast<ImGuiDockNodeFlags>(
+                           static_cast<int>(ImGuiDockNodeFlags_DockSpace) |
+                           static_cast<int>(ImGuiDockNodeFlags_PassthruCentralNode)));
       ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->WorkSize);
 
       // One column on the right, split in two. Everything else stays

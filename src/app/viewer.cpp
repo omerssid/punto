@@ -5,7 +5,8 @@
 #include <cstring>
 #include <vector>
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
+// Implementation lives in stb_impl.cpp, which is compiled with warnings
+// disabled; this is just the declarations.
 #include "stb_image_write.h"
 
 #include "core/log.hpp"
