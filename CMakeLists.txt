@@ -40,6 +40,7 @@ add_library(pcv_core STATIC
   src/io/ply_loader.cpp
   src/io/las_loader.cpp
   src/scene/chunk_builder.cpp
+  src/scene/radix_sort.cpp
   src/scene/ram_chunk_source.cpp
 )
 target_include_directories(pcv_core PUBLIC src)

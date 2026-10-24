@@ -1,129 +1,78 @@
+// Chunk construction via Morton-order sorting.
+//
+// The earlier version partitioned an octree top-down, making roughly seven
+// passes over sixteen bytes per point and touching each element three times
+// per level -- about 336 bytes of memory traffic per point. Sorting by
+// Morton code instead costs one key-building pass plus four radix passes
+// over eight-byte keys, after which every octree node is simply a
+// contiguous range of the sorted array, found by binary search.
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstring>
 #include <memory>
 #include <numeric>
 #include <random>
+#include <vector>
 
 #include "core/large_buffer.hpp"
 #include "core/log.hpp"
 #include "core/parallel.hpp"
 #include "scene/chunk.hpp"
+#include "scene/morton.hpp"
+#include "scene/radix_sort.hpp"
 
 namespace pcv {
 namespace {
 
-// Octant index: bit 0 is x >= centre, bit 1 is y, bit 2 is z.
-inline int octantOf(const Vec3f& p, const Vec3f& centre) {
-  return (p.x >= centre.x ? 1 : 0) | (p.y >= centre.y ? 2 : 0) | (p.z >= centre.z ? 4 : 0);
-}
-
-Aabbf childBox(const Aabbf& box, const Vec3f& centre, int octant) {
-  Aabbf out;
-  out.lo.x = (octant & 1) ? centre.x : box.lo.x;
-  out.hi.x = (octant & 1) ? box.hi.x : centre.x;
-  out.lo.y = (octant & 2) ? centre.y : box.lo.y;
-  out.hi.y = (octant & 2) ? box.hi.y : centre.y;
-  out.lo.z = (octant & 4) ? centre.z : box.lo.z;
-  out.hi.z = (octant & 4) ? box.hi.z : centre.z;
-  return out;
-}
-
-// The element the octree partitions.
-//
-// Carrying the position alongside the index -- rather than looking it up as
-// positions[perm[i]] -- is the difference between sequential and scattered
-// memory access. The indirection costs a cache miss per point per level,
-// which measured at ~1.5 s on a 32M-point cloud; paying 16 bytes per point
-// of scratch instead brings it down to a streaming copy.
-struct PosIdx {
-  Vec3f p;
-  std::uint32_t index;
-};
-static_assert(sizeof(PosIdx) == 16);
-
-struct Node {
-  std::uint32_t lo = 0;
-  std::uint32_t hi = 0;
-  Aabbf box;
-  int depth = 0;
-  std::uint32_t count() const { return hi - lo; }
+// A leaf of the linear octree: a run of the sorted key array.
+struct Leaf {
+  std::size_t lo = 0;
+  std::size_t hi = 0;
+  int level = 0;
+  std::size_t count() const { return hi - lo; }
 };
 
-// Partitions items[lo, hi) into eight octant groups, serially.
-// `offsets` receives the nine group boundaries, absolute into items.
-void partitionSerial(PosIdx* items, PosIdx* scratch, std::uint32_t lo, std::uint32_t hi,
-                     const Vec3f& centre, std::array<std::uint32_t, 9>& offsets) {
-  std::array<std::uint32_t, 8> counts{};
-  for (std::uint32_t i = lo; i < hi; ++i) ++counts[octantOf(items[i].p, centre)];
+// Walks the sorted keys, emitting a leaf wherever a node is small enough
+// and fine enough. Subdividing is a binary search for the end of each child
+// prefix run, not a pass over the points, so the whole recursion costs
+// about O(leaves * log n).
+void emitLeaves(const std::uint64_t* keys, std::size_t lo, std::size_t hi, int level,
+                int minLevel, std::uint32_t maxPoints, std::uint32_t minPointsToSplit,
+                std::vector<Leaf>& out) {
+  const std::size_t count = hi - lo;
+  if (count == 0) return;
 
-  offsets[0] = lo;
-  for (int o = 0; o < 8; ++o) offsets[o + 1] = offsets[o] + counts[o];
+  const bool tooMany = count > maxPoints;
+  // Nodes coarser than minLevel are split regardless of population, so a
+  // sparse region cannot become one enormous chunk that never culls.
+  const bool tooCoarse = level < minLevel && count > minPointsToSplit;
 
-  std::array<std::uint32_t, 8> cursor{};
-  for (int o = 0; o < 8; ++o) cursor[o] = offsets[o];
-  for (std::uint32_t i = lo; i < hi; ++i) {
-    const PosIdx item = items[i];
-    scratch[cursor[octantOf(item.p, centre)]++] = item;
-  }
-  std::memcpy(items + lo, scratch + lo, static_cast<std::size_t>(hi - lo) * sizeof(PosIdx));
-}
-
-// Same, but spread across workers. Used for the top levels, where a single
-// node holds most of the cloud and there are too few nodes to parallelise
-// over instead.
-void partitionParallel(PosIdx* items, PosIdx* scratch, std::uint32_t lo, std::uint32_t hi,
-                       const Vec3f& centre, unsigned workers,
-                       std::array<std::uint32_t, 9>& offsets) {
-  const std::size_t n = hi - lo;
-  struct alignas(64) Counts {
-    std::array<std::uint32_t, 8> c{};
-  };
-  std::vector<Counts> perWorker(workers);
-
-  parallelRanges(n, workers, [&](std::size_t begin, std::size_t end, unsigned w) {
-    auto& c = perWorker[w].c;
-    for (std::size_t i = begin; i < end; ++i) ++c[octantOf(items[lo + i].p, centre)];
-  });
-
-  // Exclusive prefix sum over (octant, worker) so every worker knows exactly
-  // where its share of each octant starts and can scatter without locking.
-  std::array<std::uint32_t, 8> total{};
-  for (const Counts& c : perWorker)
-    for (int o = 0; o < 8; ++o) total[o] += c.c[o];
-
-  offsets[0] = lo;
-  for (int o = 0; o < 8; ++o) offsets[o + 1] = offsets[o] + total[o];
-
-  std::vector<std::array<std::uint32_t, 8>> start(workers);
-  std::array<std::uint32_t, 8> running{};
-  for (int o = 0; o < 8; ++o) running[o] = offsets[o];
-  for (unsigned w = 0; w < workers; ++w) {
-    for (int o = 0; o < 8; ++o) {
-      start[w][o] = running[o];
-      running[o] += perWorker[w].c[o];
-    }
+  if ((!tooMany && !tooCoarse) || level >= kMortonMaxLevel) {
+    out.push_back(Leaf{lo, hi, level});
+    return;
   }
 
-  parallelRanges(n, workers, [&](std::size_t begin, std::size_t end, unsigned w) {
-    auto cursor = start[w];
-    for (std::size_t i = begin; i < end; ++i) {
-      const PosIdx item = items[lo + i];
-      scratch[cursor[octantOf(item.p, centre)]++] = item;
-    }
-  });
-
-  std::memcpy(items + lo, scratch + lo, n * sizeof(PosIdx));
+  const int childLevel = level + 1;
+  std::size_t cursor = lo;
+  while (cursor < hi) {
+    const std::uint64_t prefix = keyPrefix(keys[cursor], childLevel);
+    // Iterating over occupied prefixes rather than all eight octants skips
+    // the empty ones for free.
+    const std::uint64_t* end =
+        std::upper_bound(keys + cursor, keys + hi, prefix,
+                         [childLevel](std::uint64_t value, std::uint64_t key) {
+                           return value < keyPrefix(key, childLevel);
+                         });
+    const std::size_t next = static_cast<std::size_t>(end - keys);
+    emitLeaves(keys, cursor, next, childLevel, minLevel, maxPoints, minPointsToSplit, out);
+    cursor = next;
+  }
 }
 
-// Reorders every per-point array so that `out[i] = in[perm[i]]`.
 template <typename T>
 void gather(std::vector<T>& values, const std::vector<std::uint32_t>& perm, unsigned workers) {
   if (values.empty()) return;
   const std::size_t n = values.size();
-  // Gathered into uninitialised storage for the same reason as above, then
-  // moved back into the vector so callers keep a plain std::vector.
   LargeBuffer<T> out(n);
   parallelRanges(perm.size(), workers, [&](std::size_t begin, std::size_t end, unsigned) {
     for (std::size_t i = begin; i < end; ++i) out[i] = values[perm[i]];
@@ -149,8 +98,8 @@ void gatherColumn(ScalarColumn& column, const std::vector<std::uint32_t>& perm, 
 // extent and population.
 //
 // LiDAR points lie on surfaces rather than filling volumes, so the useful
-// measure is area per point, not volume per point. Using the two largest box
-// dimensions gives the area of the face the surface most likely spans.
+// measure is area per point, not volume per point. Using the two largest
+// box dimensions gives the area of the face the surface most likely spans.
 float estimateSpacing(const Aabbf& box, std::uint32_t count) {
   if (count == 0) return 0.0f;
   Vec3f d = box.size();
@@ -177,127 +126,64 @@ std::vector<Chunk> buildChunks(PointCloud& cloud, const ChunkBuildOptions& optio
   const unsigned workers = options.workers != 0 ? options.workers : defaultWorkerCount();
   const std::uint32_t maxPoints = std::max<std::uint32_t>(1024, options.maxPointsPerChunk);
 
-  // ------------------------------------------------- 1. octree partition
-  Stopwatch partitionTimer;
   if (!cloud.boundsLocal.valid()) cloud.recomputeBounds();
 
-  // 16 bytes per point of working set, doubled for the scatter target.
-  // Transient: both are released before the arrays are reordered.
-  //
-  // LargeBuffer rather than vector: no value-initialisation, and huge pages
-  // so faulting in a gigabyte costs ~512 faults instead of ~262,000.
-  LargeBuffer<PosIdx> items(n);
-  LargeBuffer<PosIdx> scratch(n);
-  parallelRanges(n, workers, [&](std::size_t begin, std::size_t end, unsigned) {
-    for (std::size_t i = begin; i < end; ++i)
-      items[i] = PosIdx{cloud.positions[i], static_cast<std::uint32_t>(i)};
-  });
+  // ------------------------------------------------- 1. sort by Morton code
+  Stopwatch partitionTimer;
+  const MortonGrid grid = MortonGrid::forBounds(cloud.boundsLocal);
 
-  // A chunk much wider than this is split even when it is under the point
-  // limit. A 24th of the cloud diagonal gives a few thousand chunks on a
-  // city-block map, which culls well without flooding the indirect buffer.
   float maxExtent = options.maxChunkExtent;
   if (maxExtent <= 0.0f)
     maxExtent = std::max(0.5f, length(cloud.boundsLocal.size()) / 24.0f);
 
-  std::vector<Node> level{Node{0, static_cast<std::uint32_t>(n), cloud.boundsLocal, 0}};
-  std::vector<Node> nextLevel;
-  std::vector<Node> leaves;
+  // The shallowest level whose nodes are already within the extent limit.
+  int minLevel = 0;
+  while (minLevel < kMortonMaxLevel && grid.nodeExtent(minLevel) > maxExtent) ++minLevel;
 
-  while (!level.empty()) {
-    nextLevel.clear();
+  LargeBuffer<std::uint64_t> keys(n);
+  LargeBuffer<std::uint64_t> scratch(n);
+  parallelRanges(n, workers, [&](std::size_t begin, std::size_t end, unsigned) {
+    for (std::size_t i = begin; i < end; ++i)
+      keys[i] = makeMortonKey(grid.codeFor(cloud.positions[i]), static_cast<std::uint32_t>(i));
+  });
 
-    // Nodes at this level cover disjoint ranges of perm, so they can be
-    // partitioned concurrently. Early levels have too few nodes for that to
-    // fill the machine, so those parallelise over points within each node
-    // instead.
-    const bool parallelOverNodes = level.size() >= workers;
+  // Only the code matters for ordering; the point index riding in the low
+  // 32 bits can stay in any order, so those passes are skipped.
+  radixSortByBits(keys.get(), scratch.get(), n, kMortonKeyShift, kMortonCodeBits, workers);
+  scratch.release();
 
-    std::vector<std::array<std::uint32_t, 9>> splits(level.size());
-    std::vector<char> isLeaf(level.size(), 0);
+  // ------------------------------------------------ 2. linear octree leaves
+  std::vector<Leaf> leaves;
+  leaves.reserve(1024);
+  emitLeaves(keys.get(), 0, n, 0, minLevel, maxPoints, options.minPointsToSplit, leaves);
 
-    auto processNode = [&](std::size_t ni, bool innerParallel) {
-      const Node& node = level[ni];
-      const bool tooMany = node.count() > maxPoints;
-      const bool tooWide = maxComponent(node.box.size()) > maxExtent &&
-                           node.count() > options.minPointsToSplit;
-      if ((!tooMany && !tooWide) || node.depth >= options.maxDepth) {
-        isLeaf[ni] = 1;
-        return;
-      }
-      const Vec3f centre = node.box.center();
-      if (innerParallel)
-        partitionParallel(items.get(), scratch.get(), node.lo, node.hi, centre, workers,
-                          splits[ni]);
-      else
-        partitionSerial(items.get(), scratch.get(), node.lo, node.hi, centre, splits[ni]);
-    };
-
-    Stopwatch levelTimer;
-    std::uint64_t levelPoints = 0;
-    for (const Node& nd : level) levelPoints += nd.count();
-
-    if (parallelOverNodes) {
-      parallelRanges(level.size(), workers, [&](std::size_t begin, std::size_t end, unsigned) {
-        for (std::size_t ni = begin; ni < end; ++ni) processNode(ni, false);
-      });
-    } else {
-      for (std::size_t ni = 0; ni < level.size(); ++ni) processNode(ni, true);
-    }
-
-    logDebug("  level depth={} nodes={} points={} mode={} {:.1f} ms", level[0].depth,
-             level.size(), levelPoints, parallelOverNodes ? "by-node" : "by-point",
-             levelTimer.elapsedMs());
-
-    for (std::size_t ni = 0; ni < level.size(); ++ni) {
-      const Node& node = level[ni];
-      if (isLeaf[ni]) {
-        if (node.count() > 0) leaves.push_back(node);
-        continue;
-      }
-      const Vec3f centre = node.box.center();
-      for (int o = 0; o < 8; ++o) {
-        const std::uint32_t lo = splits[ni][o];
-        const std::uint32_t hi = splits[ni][o + 1];
-        if (hi <= lo) continue;
-        nextLevel.push_back(Node{lo, hi, childBox(node.box, centre, o), node.depth + 1});
-      }
-    }
-    level.swap(nextLevel);
-  }
-
-  // Leaves come out in level order; sort so chunk index follows memory order,
-  // which keeps the GPU's indirect draws reading the vertex buffer forward.
-  std::sort(leaves.begin(), leaves.end(),
-            [](const Node& a, const Node& b) { return a.lo < b.lo; });
-
-  // Absorb undersized leaves into their neighbours.
+  // Absorb undersized leaves into a neighbour.
   //
-  // Splitting a node whose points cluster in one octant leaves siblings
-  // holding a handful of points each, and a chunk of 1 point costs a whole
-  // indirect draw command and a cull test to render nothing. Leaves are
-  // sorted by offset and cover the range contiguously, and adjacent leaves
-  // are octree siblings, so merging a run of them is both valid and
-  // spatially sensible.
+  // A leaf holding a handful of points still costs a whole indirect draw
+  // command and a cull test. Merging is restricted to siblings -- leaves
+  // sharing a parent -- and only where that parent is itself within the
+  // extent limit, so combining them cannot reintroduce an oversized chunk.
   const std::uint32_t minPoints = std::max<std::uint32_t>(1, maxPoints / 8);
   {
-    std::vector<Node> merged;
+    std::vector<Leaf> merged;
     merged.reserve(leaves.size());
-    for (const Node& leaf : leaves) {
+    for (const Leaf& leaf : leaves) {
       if (!merged.empty()) {
-        Node& prev = merged.back();
-        const bool prevTooSmall = prev.count() < minPoints;
-        const bool leafTooSmall = leaf.count() < minPoints;
+        Leaf& prev = merged.back();
+        const int parentLevel = std::min(prev.level, leaf.level) - 1;
+        const bool smallEnough = prev.count() < minPoints || leaf.count() < minPoints;
         const bool fits = prev.count() + leaf.count() <= maxPoints;
-        // Merging must not undo the extent limit: a union box wider than
-        // the limit would reintroduce exactly the chunk the split avoided.
-        Aabbf unionBox = prev.box;
-        unionBox.expand(leaf.box);
-        const bool staysCompact = maxComponent(unionBox.size()) <= maxExtent;
-        if ((prevTooSmall || leafTooSmall) && fits && staysCompact && prev.hi == leaf.lo) {
+        // Only merge where the parent is itself within the extent limit.
+        // Letting it exceed the limit traded 131 chunks for a slower frame
+        // (0.44 -> 0.47 ms): the coarser boxes cull and pick LOD worse,
+        // which costs more than the saved draw commands.
+        const bool parentCompact = parentLevel >= minLevel;
+        const bool siblings =
+            parentLevel >= 0 &&
+            keyPrefix(keys[prev.lo], parentLevel) == keyPrefix(keys[leaf.lo], parentLevel);
+        if (smallEnough && fits && parentCompact && siblings && prev.hi == leaf.lo) {
           prev.hi = leaf.hi;
-          prev.box.expand(leaf.box);
-          prev.depth = std::min(prev.depth, leaf.depth);
+          prev.level = parentLevel;
           continue;
         }
       }
@@ -307,32 +193,31 @@ std::vector<Chunk> buildChunks(PointCloud& cloud, const ChunkBuildOptions& optio
   }
   const double partitionMs = partitionTimer.elapsedMs();
 
-  // ---------------------------------------------- 2. LOD order per chunk
+  // ---------------------------------------------- 3. LOD order per chunk
   //
   // Shuffling the permutation (rather than the point data) means the whole
   // reorder is still a single gather pass. After this, the first N entries
   // of any chunk are a uniform random sample of that chunk, for every N --
   // which is what makes continuous LOD free.
   Stopwatch lodTimer;
-  scratch.release();  // 512 MB on a 32M cloud; release it before the gather
-
   std::vector<std::uint32_t> perm(n);
   parallelRanges(n, workers, [&](std::size_t begin, std::size_t end, unsigned) {
-    for (std::size_t i = begin; i < end; ++i) perm[i] = items[i].index;
+    for (std::size_t i = begin; i < end; ++i) perm[i] = keyIndex(keys[i]);
   });
-  items.release();
+  keys.release();
 
   parallelRanges(leaves.size(), workers, [&](std::size_t begin, std::size_t end, unsigned) {
     for (std::size_t li = begin; li < end; ++li) {
-      const Node& node = leaves[li];
+      const Leaf& leaf = leaves[li];
       // Seeded per chunk so a reload produces byte-identical output.
-      std::mt19937 rng(0x9E3779B9u ^ static_cast<std::uint32_t>(node.lo));
-      std::shuffle(perm.begin() + node.lo, perm.begin() + node.hi, rng);
+      std::mt19937 rng(0x9E3779B9u ^ static_cast<std::uint32_t>(leaf.lo));
+      std::shuffle(perm.begin() + static_cast<std::ptrdiff_t>(leaf.lo),
+                   perm.begin() + static_cast<std::ptrdiff_t>(leaf.hi), rng);
     }
   });
   const double lodMs = lodTimer.elapsedMs();
 
-  // --------------------------------------------------- 3. reorder arrays
+  // --------------------------------------------------- 4. reorder arrays
   Stopwatch reorderTimer;
   gather(cloud.positions, perm, workers);
   if (!cloud.colors.empty()) gather(cloud.colors, perm, workers);
@@ -340,30 +225,31 @@ std::vector<Chunk> buildChunks(PointCloud& cloud, const ChunkBuildOptions& optio
   for (ScalarColumn& column : cloud.columns) gatherColumn(column, perm, workers);
   const double reorderMs = reorderTimer.elapsedMs();
 
-  // ------------------------------------------- 4. tight bounds + spacing
+  // ------------------------------------------- 5. tight bounds + spacing
   //
-  // The octree box a chunk inherited is usually far larger than the points
-  // actually occupy. Culling against the real extent rejects far more.
+  // The octree cell a chunk occupies is usually far larger than its points
+  // actually span. Culling against the real extent rejects far more.
   Stopwatch boundsTimer;
   chunks.resize(leaves.size());
   parallelRanges(leaves.size(), workers, [&](std::size_t begin, std::size_t end, unsigned) {
     for (std::size_t li = begin; li < end; ++li) {
-      const Node& node = leaves[li];
+      const Leaf& leaf = leaves[li];
       Aabbf box;
-      for (std::uint32_t i = node.lo; i < node.hi; ++i) box.expand(cloud.positions[i]);
+      for (std::size_t i = leaf.lo; i < leaf.hi; ++i) box.expand(cloud.positions[i]);
       Chunk& chunk = chunks[li];
       chunk.bounds = box;
-      chunk.firstPoint = node.lo;
-      chunk.pointCount = node.count();
+      chunk.firstPoint = static_cast<std::uint32_t>(leaf.lo);
+      chunk.pointCount = static_cast<std::uint32_t>(leaf.count());
       chunk.spacing = estimateSpacing(box, chunk.pointCount);
     }
   });
+
   // Clamp spacing against the cloud's typical value.
   //
   // Splat radius is derived from spacing, so a sparse chunk -- 21 stray
-  // returns spread over 20 m -- would otherwise be drawn as 5 m discs.
-  // Its spacing is not wrong; the inference is. Splat size stands for a
-  // point's share of a SURFACE, and scattered noise is not a surface.
+  // returns spread over 20 m -- would otherwise be drawn as 5 m discs. Its
+  // spacing is not wrong; the inference is. Splat size stands for a point's
+  // share of a SURFACE, and scattered noise is not a surface.
   //
   // The reference is the point-weighted median, so it reflects where the
   // data actually is rather than being dragged around by the many small,
@@ -386,14 +272,12 @@ std::vector<Chunk> buildChunks(PointCloud& cloud, const ChunkBuildOptions& optio
       seen += count;
       if (seen * 2 >= totalPoints) { medianSpacing = spacing; break; }
     }
-
     if (medianSpacing > 0.0f) {
       const float lo = medianSpacing * 0.25f;
       const float hi = medianSpacing * 4.0f;
       for (Chunk& c : chunks) c.spacing = std::clamp(c.spacing, lo, hi);
     }
   }
-
   const double boundsMs = boundsTimer.elapsedMs();
 
   if (stats != nullptr) {

@@ -201,6 +201,17 @@ void printChunkReport(const PointCloud& cloud, const std::vector<Chunk>& chunks,
               pct(0.05) * 1000, pct(0.50) * 1000, pct(0.95) * 1000, pct(0.99) * 1000,
               spacings.empty() ? 0.0 : spacings.back() * 1000);
   // The worst offenders drive splat size, so name them.
+  // Chunks too small to be worth a draw command, and how much of the cloud
+  // they actually hold.
+  std::size_t tiny = 0;
+  std::uint64_t tinyPoints = 0;
+  for (const Chunk& c : chunks) {
+    if (c.pointCount < 1024) { ++tiny; tinyPoints += c.pointCount; }
+  }
+  std::printf("    tiny chunks   %zu under 1024 points (%.1f%% of chunks, %.3f%% of points)\n",
+              tiny, chunks.empty() ? 0.0 : 100.0 * static_cast<double>(tiny) / static_cast<double>(chunks.size()),
+              n == 0 ? 0.0 : 100.0 * static_cast<double>(tinyPoints) / static_cast<double>(n));
+
   std::printf("    widest chunks:\n");
   std::vector<const Chunk*> byspace;
   for (const Chunk& c : chunks) byspace.push_back(&c);
