@@ -10,6 +10,7 @@
 #include "io/loader.hpp"
 #include "scene/camera.hpp"
 #include "scene/ram_chunk_source.hpp"
+#include "ui/ui.hpp"
 
 struct GLFWwindow;
 
@@ -25,7 +26,7 @@ struct ViewerOptions {
   // Render one frame, write it to screenshotPath, and exit. Used for
   // verification without an interactive session.
   std::string screenshotPath;
-  int screenshotFrames = 3;  // let LOD and timers settle first
+  int screenshotFrames = 6;  // let LOD, the stats ring and ImGui settle
 
   // Run a fixed camera orbit and report frame times, then exit.
   bool benchmark = false;
@@ -41,6 +42,13 @@ struct ViewerOptions {
   float zoom = 1.0f;
 
   RenderSettings render;
+  bool colorModeExplicit = false;
+  std::string fieldName;  // scalar field to colour by, by name
+
+  // Pick at this screen position before capturing, so the inspector can be
+  // exercised without an interactive session. Negative means no pick.
+  int pickX = -1;
+  int pickY = -1;
 
   LoadOptions loadOptions;
   ChunkBuildOptions chunkOptions;
@@ -80,6 +88,11 @@ class Viewer {
   void onScroll(double dx, double dy);
   void onKey(int key, int scancode, int action, int mods);
   void onFramebufferSize(int width, int height);
+  void onFileDrop(int count, const char** paths);
+
+  void applyUiActions(const UiActions& actions);
+  void pickUnderCursor();
+  PickedPoint resolvePick(std::uint32_t index, float distance) const;
 
   static Viewer* fromWindow(GLFWwindow* window);
 
@@ -88,6 +101,7 @@ class Viewer {
   int height_ = 0;
 
   PointRenderer renderer_;
+  Ui ui_;
   Camera camera_;
   RenderSettings settings_;
   OpenCloud open_;
@@ -115,6 +129,10 @@ class Viewer {
   bool wantsClose_ = false;
   bool colorModeExplicit_ = false;
   float startZoom_ = 1.0f;
+  std::string requestedField_;
+  int activeScalarField_ = -1;
+  double activeScalarLo_ = 0.0;
+  double activeScalarHi_ = 1.0;
 };
 
 }  // namespace pcv

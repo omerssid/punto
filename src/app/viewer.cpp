@@ -10,6 +10,7 @@
 
 #include "core/log.hpp"
 #include "gpu/gl.hpp"
+#include "gpu/shader.hpp"
 
 namespace pcv {
 namespace {
@@ -23,7 +24,10 @@ void glfwErrorCallback(int code, const char* description) {
 }  // namespace
 
 Viewer::Viewer() = default;
-Viewer::~Viewer() { destroyWindow(); }
+Viewer::~Viewer() {
+  ui_.shutdown();
+  destroyWindow();
+}
 
 Viewer* Viewer::fromWindow(GLFWwindow* window) {
   return static_cast<Viewer*>(glfwGetWindowUserPointer(window));
@@ -99,6 +103,9 @@ bool Viewer::createWindow(const ViewerOptions& options) {
   glfwSetFramebufferSizeCallback(window_, [](GLFWwindow* w, int width, int height) {
     fromWindow(w)->onFramebufferSize(width, height);
   });
+  glfwSetDropCallback(window_, [](GLFWwindow* w, int count, const char** paths) {
+    fromWindow(w)->onFileDrop(count, paths);
+  });
 
   glfwGetFramebufferSize(window_, &width_, &height_);
   return true;
@@ -139,13 +146,23 @@ bool Viewer::openFile(const std::string& path) {
   int preferred = -1;
   for (int i = 0; i < static_cast<int>(open_.cloud->fields.size()); ++i) {
     const FieldInfo& f = open_.cloud->fields[static_cast<std::size_t>(i)];
-    if (f.role == FieldRole::Intensity) { preferred = i; break; }
-    if (f.name == "z" && preferred < 0) preferred = i;
+    if (!requestedField_.empty() && f.name == requestedField_) { preferred = i; break; }
+    if (requestedField_.empty() && f.role == FieldRole::Intensity) { preferred = i; break; }
+    if (requestedField_.empty() && f.name == "z" && preferred < 0) preferred = i;
   }
+  if (!requestedField_.empty() && preferred < 0)
+    logWarn("no field named '{}' in this cloud", requestedField_);
   if (preferred >= 0) {
     const FieldInfo& f = open_.cloud->fields[static_cast<std::size_t>(preferred)];
     renderer_.setScalarField(preferred, f.stats.min, f.stats.max);
+    activeScalarField_ = preferred;
+    activeScalarLo_ = f.stats.min;
+    activeScalarHi_ = f.stats.max;
+  } else {
+    activeScalarField_ = -1;
   }
+  // A new cloud invalidates any field the panel had selected.
+  ui_.syncScalarField(activeScalarField_, activeScalarLo_, activeScalarHi_);
   // Prefer true colour when the file has it; otherwise the scalar ramp.
   if (!colorModeExplicit_)
     settings_.colorMode = open_.cloud->hasColors() ? ColorMode::Rgb : ColorMode::Scalar;
@@ -170,6 +187,9 @@ void Viewer::onFramebufferSize(int width, int height) {
 }
 
 void Viewer::onMouseButton(int button, int action, int /*mods*/) {
+  // A press that began over a panel belongs to the panel. Releases are
+  // always processed, so a drag that wanders over a panel still ends.
+  if (action == GLFW_PRESS && ui_.wantsMouse()) return;
   const bool pressed = action == GLFW_PRESS;
   if (button == GLFW_MOUSE_BUTTON_LEFT) {
     const bool shift = glfwGetKey(window_, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
@@ -198,7 +218,10 @@ void Viewer::onCursorMove(double x, double y) {
   }
 }
 
-void Viewer::onScroll(double /*dx*/, double dy) { camera_.dolly(static_cast<float>(dy)); }
+void Viewer::onScroll(double /*dx*/, double dy) {
+  if (ui_.wantsMouse()) return;
+  camera_.dolly(static_cast<float>(dy));
+}
 
 void Viewer::onKey(int key, int /*scancode*/, int action, int /*mods*/) {
   if (key >= 0 && key < 512) {
@@ -206,6 +229,8 @@ void Viewer::onKey(int key, int /*scancode*/, int action, int /*mods*/) {
     if (action == GLFW_RELEASE) keyDown_[key] = false;
   }
   if (action != GLFW_PRESS) return;
+  // Let text fields receive characters rather than triggering shortcuts.
+  if (ui_.wantsKeyboard()) return;
 
   const float aspect = static_cast<float>(width_) / static_cast<float>(std::max(1, height_));
   switch (key) {
@@ -227,34 +252,18 @@ void Viewer::onKey(int key, int /*scancode*/, int action, int /*mods*/) {
       else logError("shader reload failed: {}", error);
       break;
     }
-    case GLFW_KEY_P: {
-      // Pick the point under the cursor.
-      std::uint32_t index = 0;
-      float distance = 0.0f;
-      const int mx = static_cast<int>(cursorX_);
-      // GLFW's cursor origin is top-left; GL's viewport origin is bottom-left.
-      const int my = height_ - static_cast<int>(cursorY_);
-      if (renderer_.pick(camera_, width_, height_, mx, my, index, distance)) {
-        hasSelection_ = true;
-        selectedPoint_ = index;
-        selectedDistance_ = distance;
-        if (open_.cloud != nullptr && index < open_.cloud->size()) {
-          const Vec3 world = open_.cloud->worldPosition(index);
-          logInfo("picked row {} at ({:.4f} {:.4f} {:.4f}), {:.2f} m away",
-                  open_.cloud->sourceRow(index), world.x, world.y, world.z, distance);
-        }
-      } else {
-        hasSelection_ = false;
-        logInfo("nothing under the cursor");
-      }
+    case GLFW_KEY_P: pickUnderCursor(); break;
+    case GLFW_KEY_TAB: ui_.togglePanels(); break;
+    case GLFW_KEY_G:
+      if (hasSelection_ && open_.cloud != nullptr && selectedPoint_ < open_.cloud->size())
+        camera_.focusOn(open_.cloud->positions[selectedPoint_]);
       break;
-    }
     default: break;
   }
 }
 
 void Viewer::processInput(float deltaSeconds) {
-  if (camera_.mode != NavMode::Fly) return;
+  if (camera_.mode != NavMode::Fly || ui_.wantsKeyboard()) return;
 
   Vec3f motion{0.0f, 0.0f, 0.0f};
   if (keyDown_[GLFW_KEY_W]) motion.z += 1.0f;
@@ -269,6 +278,80 @@ void Viewer::processInput(float deltaSeconds) {
   if (keyDown_[GLFW_KEY_LEFT_SHIFT]) speed *= 6.0f;
   if (keyDown_[GLFW_KEY_LEFT_ALT]) speed *= 0.15f;
   camera_.moveLocal(normalize(motion) * (speed * deltaSeconds));
+}
+
+void Viewer::onFileDrop(int count, const char** paths) {
+  // Open the first thing dropped; opening several at once would need
+  // multi-cloud support, which the renderer does not have yet.
+  if (count > 0 && paths != nullptr && paths[0] != nullptr) openFile(paths[0]);
+}
+
+PickedPoint Viewer::resolvePick(std::uint32_t index, float distance) const {
+  PickedPoint picked;
+  if (open_.cloud == nullptr || index >= open_.cloud->size()) return picked;
+
+  picked.valid = true;
+  picked.index = index;
+  picked.sourceRow = open_.cloud->sourceRow(index);
+  picked.world = open_.cloud->worldPosition(index);
+  picked.cameraDistance = distance;
+
+  // Chunks tile the point array in order, so the owning chunk is the last
+  // one whose first point is at or before this index.
+  const auto& chunks = open_.chunks;
+  const auto it = std::upper_bound(chunks.begin(), chunks.end(), index,
+                                   [](std::uint32_t value, const Chunk& chunk) {
+                                     return value < chunk.firstPoint;
+                                   });
+  if (it != chunks.begin())
+    picked.chunkIndex = static_cast<int>(std::distance(chunks.begin(), it) - 1);
+  return picked;
+}
+
+void Viewer::pickUnderCursor() {
+  std::uint32_t index = 0;
+  float distance = 0.0f;
+  const int mx = static_cast<int>(cursorX_);
+  // GLFW's cursor origin is top-left; GL's viewport origin is bottom-left.
+  const int my = height_ - static_cast<int>(cursorY_);
+
+  if (!renderer_.pick(camera_, width_, height_, mx, my, index, distance)) {
+    hasSelection_ = false;
+    ui_.clearSelection();
+    return;
+  }
+
+  hasSelection_ = true;
+  selectedPoint_ = index;
+  selectedDistance_ = distance;
+  const PickedPoint picked = resolvePick(index, distance);
+  ui_.setSelection(picked);
+  if (ui_.measureModeActive()) ui_.addMeasurementPoint(picked);
+
+  logInfo("picked row {} at ({:.4f} {:.4f} {:.4f}), {:.2f} m away", picked.sourceRow,
+          picked.world.x, picked.world.y, picked.world.z, distance);
+}
+
+void Viewer::applyUiActions(const UiActions& actions) {
+  const float aspect = static_cast<float>(width_) / static_cast<float>(std::max(1, height_));
+
+  if (!actions.openPath.empty()) openFile(actions.openPath);
+  if (actions.frameAll && open_.cloud != nullptr)
+    camera_.frameBounds(open_.cloud->boundsLocal, aspect);
+  if (actions.focusSelection && hasSelection_ && open_.cloud != nullptr &&
+      selectedPoint_ < open_.cloud->size())
+    camera_.focusOn(open_.cloud->positions[selectedPoint_]);
+  if (actions.scalarFieldChanged && actions.scalarField >= 0) {
+    renderer_.setScalarField(actions.scalarField, actions.scalarLo, actions.scalarHi);
+    activeScalarField_ = actions.scalarField;
+    activeScalarLo_ = actions.scalarLo;
+    activeScalarHi_ = actions.scalarHi;
+  }
+  if (actions.reloadShaders) {
+    std::string error;
+    if (renderer_.reloadShaders(error)) logInfo("shaders reloaded");
+    else logError("shader reload failed: {}", error);
+  }
 }
 
 void Viewer::renderFrame() {
@@ -345,8 +428,17 @@ int Viewer::run(const ViewerOptions& options) {
     logError("renderer init failed: {}", error);
     return 1;
   }
+  // The benchmark measures the renderer, so it runs without the UI.
+  // Screenshots keep it, which is how the panels get verified.
+  const bool headless = options.benchmark;
+  if (!headless && !ui_.initialize(window_, error)) {
+    logError("UI init failed: {}", error);
+    return 1;
+  }
 
   settings_ = options.render;
+  colorModeExplicit_ = options.colorModeExplicit;
+  requestedField_ = options.fieldName;
   camera_.mode = options.nav;
   startZoom_ = options.zoom;
   if (options.haveYaw) camera_.yaw = static_cast<float>(radians(options.yawDegrees));
@@ -356,14 +448,40 @@ int Viewer::run(const ViewerOptions& options) {
     if (!openFile(path)) return 1;
 
   if (!options.screenshotPath.empty()) {
-    for (int i = 0; i < std::max(1, options.screenshotFrames); ++i) {
+    // Several frames so LOD, the statistics ring and ImGui's first-frame
+    // layout all settle before the capture.
+    const int frames = std::max(2, options.screenshotFrames);
+    if (options.pickX >= 0 && options.pickY >= 0) {
+      // Needs one render first so the cull pass has populated the draw
+      // commands the pick pass reuses.
       renderFrame();
-      glfwSwapBuffers(window_);
-      glfwPollEvents();
+      cursorX_ = options.pickX;
+      cursorY_ = options.pickY;
+      pickUnderCursor();
     }
-    glFinish();
-    // The last swap moved the rendered image to the back buffer.
-    renderFrame();
+    for (int i = 0; i < frames; ++i) {
+      glfwPollEvents();
+      ui_.beginFrame();
+      UiInput uiInput;
+      uiInput.cloud = open_.cloud.get();
+      uiInput.chunks = &open_.chunks;
+      uiInput.chunkStats = &open_.chunkStats;
+      uiInput.renderStats = &renderer_.stats();
+      uiInput.device = &device_;
+      uiInput.cloudPath = &open_.path;
+      uiInput.frameMs = 0.7;
+      uiInput.freeVramMB = queryFreeVramMB();
+      uiInput.shaderLiveReload = ShaderLibrary::instance().liveReloadActive();
+      uiInput.scalarField = activeScalarField_;
+      uiInput.scalarLo = activeScalarLo_;
+      uiInput.scalarHi = activeScalarHi_;
+      ui_.draw(uiInput, settings_, camera_);
+      renderFrame();
+      ui_.endFrame();
+      // Read from the back buffer on the final pass rather than swapping,
+      // so the capture is the frame just drawn.
+      if (i + 1 < frames) glfwSwapBuffers(window_);
+    }
     glFinish();
     logFrameStats();
     return saveScreenshot(options.screenshotPath) ? 0 : 1;
@@ -376,6 +494,7 @@ int Viewer::run(const ViewerOptions& options) {
 
   lastFrameTime_ = glfwGetTime();
   double statsTimer = 0.0;
+  (void)statsTimer;
   while (glfwWindowShouldClose(window_) == 0 && !wantsClose_) {
     const double now = glfwGetTime();
     const double delta = now - lastFrameTime_;
@@ -387,8 +506,30 @@ int Viewer::run(const ViewerOptions& options) {
 
     glfwPollEvents();
     processInput(static_cast<float>(delta));
+
+    ui_.beginFrame();
+    UiInput uiInput;
+    uiInput.cloud = open_.cloud.get();
+    uiInput.chunks = &open_.chunks;
+    uiInput.chunkStats = &open_.chunkStats;
+    uiInput.renderStats = &renderer_.stats();
+    uiInput.device = &device_;
+    uiInput.cloudPath = &open_.path;
+    uiInput.frameMs = smoothedFrameMs_;
+    uiInput.freeVramMB = queryFreeVramMB();
+    uiInput.shaderLiveReload = ShaderLibrary::instance().liveReloadActive();
+    uiInput.scalarField = activeScalarField_;
+    uiInput.scalarLo = activeScalarLo_;
+    uiInput.scalarHi = activeScalarHi_;
+    const UiActions actions = ui_.draw(uiInput, settings_, camera_);
+
+    // The 3D pass clears and owns the default framebuffer, so it has to run
+    // before ImGui's draw data is submitted on top of it.
     renderFrame();
+    ui_.endFrame();
     glfwSwapBuffers(window_);
+
+    applyUiActions(actions);
 
     statsTimer += delta;
     if (statsTimer > 2.0) {

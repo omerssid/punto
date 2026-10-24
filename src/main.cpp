@@ -31,6 +31,10 @@ void usage() {
       "  --density F               LOD target points per pixel (default 1.0)\n"
       "  --point-scale F           splat size multiplier (default 1.0)\n"
       "  --no-edl  --no-lod        disable eye-dome lighting / LOD\n"
+      "  --color rgb|scalar|flat|chunk   colour source\n"
+      "  --field NAME              scalar field to colour by\n"
+      "  --ramp NAME               viridis|turbo|grayscale|coolwarm|plasma|spectral\n"
+      "  --pick X,Y                pick at this screen position before capturing\n"
       "  --chunk-size N            max points per chunk (default 131072)\n"
       "  --keep-invalid            keep points with NaN/Inf coordinates\n"
       "  --threads N               worker threads for loading\n"
@@ -100,6 +104,37 @@ int main(int argc, char** argv) {
     }
     if (arg == "--zoom" && i + 1 < argc) {
       options.zoom = static_cast<float>(std::atof(argv[++i]));
+      continue;
+    }
+    if (arg == "--color" && i + 1 < argc) {
+      const std::string v = argv[++i];
+      if (v == "rgb") options.render.colorMode = pcv::ColorMode::Rgb;
+      else if (v == "scalar") options.render.colorMode = pcv::ColorMode::Scalar;
+      else if (v == "flat") options.render.colorMode = pcv::ColorMode::Flat;
+      else if (v == "chunk") options.render.colorMode = pcv::ColorMode::ChunkId;
+      else { std::fprintf(stderr, "unknown --color '%s'\n", v.c_str()); return 2; }
+      options.colorModeExplicit = true;
+      continue;
+    }
+    if (arg == "--field" && i + 1 < argc) { options.fieldName = argv[++i]; continue; }
+    if (arg == "--pick" && i + 1 < argc) {
+      const std::string v = argv[++i];
+      const std::size_t comma = v.find(',');
+      if (comma == std::string::npos) {
+        std::fprintf(stderr, "--pick expects X,Y\n");
+        return 2;
+      }
+      options.pickX = std::atoi(v.substr(0, comma).c_str());
+      options.pickY = std::atoi(v.substr(comma + 1).c_str());
+      continue;
+    }
+    if (arg == "--ramp" && i + 1 < argc) {
+      const std::string v = argv[++i];
+      const char* names[] = {"viridis", "turbo", "grayscale", "coolwarm", "plasma", "spectral"};
+      bool found = false;
+      for (int r = 0; r < 6; ++r)
+        if (v == names[r]) { options.render.ramp = static_cast<pcv::ColorRamp>(r); found = true; }
+      if (!found) { std::fprintf(stderr, "unknown --ramp '%s'\n", v.c_str()); return 2; }
       continue;
     }
     if (arg == "--no-edl") { options.render.edlEnabled = false; continue; }

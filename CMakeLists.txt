@@ -110,6 +110,7 @@ add_executable(pcd_viewer
   src/main.cpp
   src/app/viewer.cpp
   src/app/gpu_select.cpp
+  src/ui/ui.cpp
 )
 target_include_directories(pcd_viewer PRIVATE third_party/stb)
 target_link_libraries(pcd_viewer PRIVATE pcv_gpu pcv_imgui)
