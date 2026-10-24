@@ -1,0 +1,202 @@
+// pcv_probe -- inspect a point cloud from the terminal.
+//
+// Prints what pcl_viewer never tells you: every declared field with its type,
+// range, mean and distribution; the exact bounding box; invalid point counts;
+// and where the load time actually went.
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <format>
+#include <string>
+#include <vector>
+
+#include "core/log.hpp"
+#include "core/parallel.hpp"
+#include "io/loader.hpp"
+
+namespace {
+
+using namespace pcv;
+
+// Renders a histogram as one line of block characters.
+std::string sparkline(const std::vector<std::uint32_t>& bins, std::size_t width) {
+  static const char* kBlocks[] = {" ", "▁", "▂", "▃",
+                                  "▄", "▅", "▆", "▇"};
+  if (bins.empty()) return {};
+
+  // Resample the 256 bins down to `width` columns.
+  std::vector<std::uint64_t> cols(width, 0);
+  for (std::size_t i = 0; i < bins.size(); ++i)
+    cols[i * width / bins.size()] += bins[i];
+
+  std::uint64_t peak = 0;
+  for (std::uint64_t v : cols) peak = std::max(peak, v);
+  if (peak == 0) return std::string(width, ' ');
+
+  std::string out;
+  for (std::uint64_t v : cols) {
+    // Log scale, so a long tail stays visible next to a dominant mode.
+    const double norm = v == 0 ? 0.0 : std::log1p(static_cast<double>(v)) / std::log1p(static_cast<double>(peak));
+    const int level = std::min(7, static_cast<int>(norm * 7.999));
+    out += kBlocks[level];
+  }
+  return out;
+}
+
+std::string humanBytes(std::uint64_t bytes) {
+  const char* units[] = {"B", "KB", "MB", "GB", "TB"};
+  double v = static_cast<double>(bytes);
+  int u = 0;
+  while (v >= 1024.0 && u < 4) { v /= 1024.0; ++u; }
+  return std::format("{:.1f} {}", v, units[u]);
+}
+
+std::string withThousands(std::uint64_t v) {
+  std::string s = std::to_string(v);
+  for (int i = static_cast<int>(s.size()) - 3; i > 0; i -= 3) s.insert(static_cast<std::size_t>(i), ",");
+  return s;
+}
+
+void printReport(const PointCloud& cloud, const LoadResult& result) {
+  std::printf("\n\x1b[1m%s\x1b[0m\n", cloud.sourcePath.c_str());
+  std::printf("  format        %s\n", cloud.formatName.c_str());
+  std::printf("  file size     %s\n", humanBytes(cloud.sourceBytes).c_str());
+  std::printf("  points        %s\n", withThousands(cloud.size()).c_str());
+  if (cloud.invalidPointsDropped > 0) {
+    const double pct = 100.0 * static_cast<double>(cloud.invalidPointsDropped) /
+                       static_cast<double>(cloud.invalidPointsDropped + cloud.size());
+    std::printf("  invalid       %s dropped (%.2f%%)\n",
+                withThousands(cloud.invalidPointsDropped).c_str(), pct);
+  }
+  if (cloud.organized) std::printf("  organized     %u x %u\n", cloud.width, cloud.height);
+  std::printf("  resident      %s\n", humanBytes(cloud.memoryBytes()).c_str());
+  std::printf("  colors        %s\n", cloud.hasColors() ? "yes" : "no");
+  std::printf("  source rows   %s\n", cloud.hasSourceIndex() ? "tracked" : "not tracked");
+
+  const Aabb& b = cloud.boundsWorld;
+  if (b.valid()) {
+    const Vec3 size = b.size();
+    const Vec3 c = b.center();
+    std::printf("\n  \x1b[1mbounds (world)\x1b[0m\n");
+    std::printf("    min   %16.4f %16.4f %16.4f\n", b.lo.x, b.lo.y, b.lo.z);
+    std::printf("    max   %16.4f %16.4f %16.4f\n", b.hi.x, b.hi.y, b.hi.z);
+    std::printf("    size  %16.4f %16.4f %16.4f\n", size.x, size.y, size.z);
+    std::printf("    mid   %16.4f %16.4f %16.4f\n", c.x, c.y, c.z);
+    std::printf("    diag  %.4f m\n", b.diagonal());
+  }
+  std::printf("  origin  %16.4f %16.4f %16.4f   (positions stored relative to this)\n",
+              cloud.origin.x, cloud.origin.y, cloud.origin.z);
+
+  std::printf("\n  \x1b[1mfields\x1b[0m\n");
+  std::printf("    %-14s %-9s %-10s %14s %14s %14s %12s  %s\n", "name", "type", "role", "min",
+              "max", "mean", "stddev", "distribution");
+  std::printf("    %s\n", std::string(14 + 9 + 10 + 14 * 3 + 12 + 20, '-').c_str());
+
+  for (const FieldInfo& f : cloud.fields) {
+    const FieldStats& s = f.stats;
+    if (!s.valid()) {
+      // Packed rgb/rgba folds into the colour array, so it has no scalar
+      // column; its distribution is reported per channel just below.
+      const char* note = (f.role == FieldRole::Color && cloud.colorStatsValid)
+                             ? "packed -> colour channels below"
+                             : "(no data)";
+      std::printf("    %-14s %-9s %-10s %s\n", f.name.c_str(), fieldTypeName(f.type),
+                  fieldRoleName(f.role), note);
+      continue;
+    }
+    std::printf("    %-14s %-9s %-10s %14.4f %14.4f %14.4f %12.4f  %s\n", f.name.c_str(),
+                fieldTypeName(f.type), fieldRoleName(f.role), s.min, s.max, s.mean, s.stddev,
+                sparkline(s.histogram, 24).c_str());
+    if (s.nonFiniteCount > 0)
+      std::printf("    %-14s   \x1b[33m%s non-finite values\x1b[0m\n", "",
+                  withThousands(s.nonFiniteCount).c_str());
+    if (s.discrete && !s.distinctValues.empty()) {
+      std::string list;
+      for (std::size_t i = 0; i < s.distinctValues.size() && i < 16; ++i) {
+        if (i) list += " ";
+        list += std::format("{:g}", s.distinctValues[i]);
+      }
+      if (s.distinctValues.size() > 16) list += " ...";
+      std::printf("    %-14s   %zu distinct: %s\n", "", s.distinctValues.size(), list.c_str());
+    }
+  }
+
+  if (cloud.colorStatsValid) {
+    static const char* kChannelNames[] = {"red", "green", "blue", "alpha"};
+    std::printf("\n  \x1b[1mcolour channels\x1b[0m\n");
+    bool greyscale = true;
+    for (int ch = 0; ch < 3; ++ch) {
+      const FieldStats& s = cloud.colorChannelStats[static_cast<std::size_t>(ch)];
+      if (!s.valid()) continue;
+      std::printf("    %-14s %-9s %-10s %14.0f %14.0f %14.2f %12.2f  %s\n", kChannelNames[ch],
+                  "uint8", "color", s.min, s.max, s.mean, s.stddev,
+                  sparkline(s.histogram, 24).c_str());
+    }
+    // If all three channels share a mean and spread, the cloud is almost
+    // certainly intensity replicated across RGB rather than true colour.
+    const FieldStats& r = cloud.colorChannelStats[0];
+    const FieldStats& g = cloud.colorChannelStats[1];
+    const FieldStats& b = cloud.colorChannelStats[2];
+    greyscale = r.valid() && g.valid() && b.valid() &&
+                std::abs(r.mean - g.mean) < 0.5 && std::abs(g.mean - b.mean) < 0.5 &&
+                std::abs(r.stddev - g.stddev) < 0.5 && std::abs(g.stddev - b.stddev) < 0.5;
+    if (greyscale)
+      std::printf("    \x1b[33mchannels are identical: greyscale, probably intensity as RGB\x1b[0m\n");
+  }
+
+  const LoadTiming& t = cloud.timing;
+  std::printf("\n  \x1b[1mload\x1b[0m  %.0f ms total   (%.0f MB/s)\n", t.totalMs,
+              t.throughputMBs(cloud.sourceBytes));
+  std::printf("    map %.1f  header %.1f  decode %.1f  stats %.1f  (ms)\n", t.mapMs, t.headerMs,
+              t.decodeMs, t.statsMs);
+  std::printf("    %u worker threads\n", defaultWorkerCount());
+
+  for (const std::string& w : result.warnings)
+    std::printf("  \x1b[33mwarning\x1b[0m  %s\n", w.c_str());
+  std::printf("\n");
+}
+
+void usage() {
+  std::printf(
+      "usage: pcv_probe [options] <file> [<file> ...]\n"
+      "\n"
+      "  --keep-invalid     retain points with NaN/Inf coordinates\n"
+      "  --no-source-index  do not record each point's source row\n"
+      "  --threads N        worker threads (default: all cores)\n"
+      "  --bin-fields N     float32 fields per point for raw .bin (default 4)\n"
+      "  -v                 verbose timing\n");
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  LoadOptions options;
+  std::vector<std::string> paths;
+
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--keep-invalid") options.dropInvalid = false;
+    else if (arg == "--no-source-index") options.keepSourceIndex = false;
+    else if (arg == "--threads" && i + 1 < argc) options.workers = static_cast<unsigned>(std::atoi(argv[++i]));
+    else if (arg == "--bin-fields" && i + 1 < argc) options.rawBinFieldCount = std::atoi(argv[++i]);
+    else if (arg == "-v") setLogLevel(LogLevel::Debug);
+    else if (arg == "-h" || arg == "--help") { usage(); return 0; }
+    else if (!arg.empty() && arg[0] == '-') { std::printf("unknown option: %s\n", arg.c_str()); usage(); return 2; }
+    else paths.push_back(arg);
+  }
+
+  if (paths.empty()) { usage(); return 2; }
+
+  int failures = 0;
+  for (const std::string& path : paths) {
+    PointCloud cloud;
+    const LoadResult result = loadPointCloud(path, options, cloud);
+    if (!result.ok) {
+      std::fprintf(stderr, "\x1b[31merror\x1b[0m  %s: %s\n", path.c_str(), result.error.c_str());
+      ++failures;
+      continue;
+    }
+    printReport(cloud, result);
+  }
+  return failures == 0 ? 0 : 1;
+}
