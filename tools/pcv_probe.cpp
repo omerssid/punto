@@ -3,6 +3,7 @@
 // Prints what pcl_viewer never tells you: every declared field with its type,
 // range, mean and distribution; the exact bounding box; invalid point counts;
 // and where the load time actually went.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -192,6 +193,30 @@ void printChunkReport(const PointCloud& cloud, const std::vector<Chunk>& chunks,
   if (!chunks.empty()) meanSpacing /= static_cast<double>(chunks.size());
   std::printf("    quantization  %.3f mm worst-case error (half a step)\n", worstStep * 500.0);
   std::printf("    mean spacing  %.1f mm between neighbouring points\n", meanSpacing * 1000.0);
+
+  std::vector<double> spacings;
+  spacings.reserve(chunks.size());
+  for (const Chunk& c : chunks) spacings.push_back(c.spacing);
+  std::sort(spacings.begin(), spacings.end());
+  auto pct = [&](double p) {
+    return spacings.empty() ? 0.0 : spacings[std::min(spacings.size() - 1,
+                                     static_cast<std::size_t>(p * spacings.size()))];
+  };
+  std::printf("    spacing pct   p5 %.0f  p50 %.0f  p95 %.0f  p99 %.0f  max %.0f mm\n",
+              pct(0.05) * 1000, pct(0.50) * 1000, pct(0.95) * 1000, pct(0.99) * 1000,
+              spacings.empty() ? 0.0 : spacings.back() * 1000);
+  // The worst offenders drive splat size, so name them.
+  std::printf("    widest chunks:\n");
+  std::vector<const Chunk*> byspace;
+  for (const Chunk& c : chunks) byspace.push_back(&c);
+  std::sort(byspace.begin(), byspace.end(),
+            [](const Chunk* a, const Chunk* b) { return a->spacing > b->spacing; });
+  for (std::size_t i = 0; i < std::min<std::size_t>(5, byspace.size()); ++i) {
+    const Chunk* c = byspace[i];
+    const Vec3f e = c->bounds.size();
+    std::printf("      spacing %6.0f mm  %8u pts  box %.1f x %.1f x %.1f m\n",
+                c->spacing * 1000.0, c->pointCount, e.x, e.y, e.z);
+  }
 
   // Verify the invariant the renderer depends on.
   std::uint64_t covered = 0;

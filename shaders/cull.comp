@@ -1,0 +1,126 @@
+#version 460
+// GPU-driven culling and level-of-detail selection.
+//
+// One invocation per chunk. Survivors append a draw command to a buffer that
+// glMultiDrawArraysIndirectCount consumes directly, so the CPU issues a fixed
+// three GL calls per frame no matter how large the cloud is. This is the
+// reason frame cost tracks screen area rather than point count.
+#include "common.glsl"
+
+layout(local_size_x = 64) in;
+
+layout(std430, binding = BIND_CHUNKS) readonly buffer ChunkBuffer {
+  GpuChunk chunks[];
+};
+
+// uvec4 maps onto DrawArraysIndirectCommand:
+//   x = count (the LOD prefix length), y = instanceCount,
+//   z = first (chunk.firstPoint), w = baseInstance (the chunk index).
+layout(std430, binding = BIND_DRAW_CMDS) writeonly buffer DrawCommandBuffer {
+  uvec4 drawCommands[];
+};
+
+// Element 0 doubles as the GL_PARAMETER_BUFFER count for the indirect draw.
+// The rest are counters the UI reads back for its statistics.
+layout(std430, binding = BIND_DRAW_COUNT) buffer DrawCountBuffer {
+  uint drawCount;
+  uint drawnPoints;
+  uint visibleChunks;
+  uint culledChunks;
+};
+
+// How much each surviving chunk was thinned, as a radius multiplier. A chunk
+// drawn at 1/16 detail has points sqrt(16) = 4x further apart, so its splats
+// must be 4x wider or the surface turns to confetti.
+layout(std430, binding = BIND_LOD_SCALE) writeonly buffer LodScaleBuffer {
+  float lodScale[];
+};
+
+uniform vec4 uFrustumPlanes[6];  // xyz = normal, w = distance; inward-facing
+uniform vec3 uCameraPos;
+uniform uint uChunkCount;
+uniform float uProjScale;     // viewportHeight / (2 * tan(fovY / 2))
+uniform float uDensity;       // target points per pixel
+uniform float uMinChunkPoints;
+uniform int uLodEnabled;
+uniform int uOrthographic;
+uniform float uOrthoPixelsPerMetre;
+
+// Clip plane in local space, xyz = normal and w = offset; points on the
+// negative side are hidden. Lets a chunk be rejected wholesale.
+uniform vec4 uClipPlane;
+uniform int uClipEnabled;
+
+// Conservative AABB-vs-plane test using the "positive vertex": the corner
+// furthest along the plane normal. If even that corner is behind the plane,
+// every corner is, and the box cannot intersect the frustum.
+bool insideFrustum(vec3 lo, vec3 hi) {
+  for (int i = 0; i < 6; ++i) {
+    vec4 plane = uFrustumPlanes[i];
+    vec3 positive = mix(lo, hi, step(vec3(0.0), plane.xyz));
+    if (dot(plane.xyz, positive) + plane.w < 0.0) return false;
+  }
+  return true;
+}
+
+void main() {
+  uint index = gl_GlobalInvocationID.x;
+  if (index >= uChunkCount) return;
+
+  GpuChunk chunk = chunks[index];
+  lodScale[index] = 1.0;
+
+  if (chunk.pointCount == 0u) return;
+
+  vec3 lo = chunk.boundsMin.xyz;
+  vec3 hi = chunk.boundsMax.xyz;
+
+  if (!insideFrustum(lo, hi)) {
+    atomicAdd(culledChunks, 1u);
+    return;
+  }
+
+  if (uClipEnabled != 0) {
+    // Same positive-vertex trick: reject only when the whole box is clipped.
+    vec3 positive = mix(lo, hi, step(vec3(0.0), uClipPlane.xyz));
+    if (dot(uClipPlane.xyz, positive) + uClipPlane.w < 0.0) {
+      atomicAdd(culledChunks, 1u);
+      return;
+    }
+  }
+
+  // How many points this chunk is worth at its current size on screen.
+  uint wanted = chunk.pointCount;
+  if (uLodEnabled != 0) {
+    vec3 centre = (lo + hi) * 0.5;
+    float radius = length(hi - lo) * 0.5;
+
+    float pixelRadius;
+    if (uOrthographic != 0) {
+      // No perspective divide: scale is constant across the view.
+      pixelRadius = radius * uOrthoPixelsPerMetre;
+    } else {
+      // Guard against the camera sitting inside the chunk, where distance
+      // goes to zero and the projected size to infinity.
+      float distance = max(length(centre - uCameraPos) - radius, 0.01);
+      pixelRadius = radius * uProjScale / distance;
+    }
+
+    float pixelArea = 3.14159265 * pixelRadius * pixelRadius;
+    float target = pixelArea * uDensity;
+    wanted = uint(clamp(target, uMinChunkPoints, float(chunk.pointCount)));
+    wanted = min(wanted, chunk.pointCount);
+  }
+
+  if (wanted == 0u) return;
+
+  // The LOD prefix property: points were shuffled within the chunk at build
+  // time, so the first `wanted` of them are a uniform sample of the whole.
+  lodScale[index] = sqrt(float(chunk.pointCount) / float(wanted));
+
+  uint slot = atomicAdd(drawCount, 1u);
+  drawCommands[slot] = uvec4(wanted, 1u, chunk.firstPoint, index);
+
+  atomicAdd(drawnPoints, wanted);
+  atomicAdd(visibleChunks, 1u);
+}

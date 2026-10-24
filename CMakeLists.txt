@@ -61,6 +61,59 @@ else()
                  "(install liblaszip-dev to enable)")
 endif()
 
+# ---------------------------------------------------------------- viewer
+
+find_package(OpenGL REQUIRED)
+find_package(GLEW REQUIRED)
+find_package(glfw3 QUIET)
+if(NOT glfw3_FOUND)
+  find_library(GLFW_LIBRARY NAMES glfw glfw3 REQUIRED)
+  set(PCV_GLFW ${GLFW_LIBRARY})
+else()
+  set(PCV_GLFW glfw)
+endif()
+
+# Dear ImGui, vendored. Only the GLFW + OpenGL3 backend is compiled.
+add_library(pcv_imgui STATIC
+  third_party/imgui/imgui.cpp
+  third_party/imgui/imgui_draw.cpp
+  third_party/imgui/imgui_tables.cpp
+  third_party/imgui/imgui_widgets.cpp
+  third_party/imgui/backends/imgui_impl_glfw.cpp
+  third_party/imgui/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(pcv_imgui PUBLIC
+  third_party/imgui third_party/imgui/backends)
+target_link_libraries(pcv_imgui PUBLIC ${PCV_GLFW} OpenGL::GL)
+# Vendored third-party code; its warnings are not ours to fix.
+target_compile_options(pcv_imgui PRIVATE -w)
+
+# Shaders are embedded into the binary so the viewer is a single file.
+include(cmake/embed_shaders.cmake)
+set(PCV_EMBEDDED_SHADERS ${CMAKE_CURRENT_BINARY_DIR}/generated/embedded_shaders.cpp)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/generated)
+pcv_embed_shaders(${PCV_EMBEDDED_SHADERS} ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+
+add_library(pcv_gpu STATIC
+  src/gpu/gl.cpp
+  src/gpu/shader.cpp
+  src/gpu/point_renderer.cpp
+  src/scene/camera.cpp
+  ${PCV_EMBEDDED_SHADERS}
+)
+target_link_libraries(pcv_gpu PUBLIC pcv_core GLEW::GLEW OpenGL::GL ${PCV_GLFW})
+# Lets ShaderLibrary pick up edits to shaders/ without a rebuild.
+target_compile_definitions(pcv_gpu PRIVATE
+  PCV_SOURCE_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders")
+
+add_executable(pcd_viewer
+  src/main.cpp
+  src/app/viewer.cpp
+  src/app/gpu_select.cpp
+)
+target_include_directories(pcd_viewer PRIVATE third_party/stb)
+target_link_libraries(pcd_viewer PRIVATE pcv_gpu pcv_imgui)
+
 # ---------------------------------------------------------------- tools
 
 add_executable(pcv_probe tools/pcv_probe.cpp)

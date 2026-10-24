@@ -86,6 +86,21 @@ struct ChunkBuildOptions {
   // precisely but add per-chunk overhead in the compute pass and more
   // indirect draw commands.
   std::uint32_t maxPointsPerChunk = 131072;
+  // Upper bound on a chunk's largest dimension, in metres. 0 derives one
+  // from the cloud's diagonal.
+  //
+  // Splitting on point count alone lets a sparsely populated region become
+  // one enormous chunk -- on a 32M-point HD map, a 368 x 201 x 7 m box
+  // holding just 54k points. Such a chunk is never outside the frustum, so
+  // it is never culled, and its mean-spacing estimate comes out 22x too
+  // large, which inflates every splat drawn from it.
+  float maxChunkExtent = 0.0f;
+
+  // A node below this many points is left alone however large its box, so
+  // that a handful of stray returns cannot drive the tree to its depth
+  // limit.
+  std::uint32_t minPointsToSplit = 256;
+
   // Guards against unbounded recursion when many points share a position.
   int maxDepth = 16;
   unsigned workers = 0;

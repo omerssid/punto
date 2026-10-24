@@ -193,6 +193,13 @@ std::vector<Chunk> buildChunks(PointCloud& cloud, const ChunkBuildOptions& optio
       items[i] = PosIdx{cloud.positions[i], static_cast<std::uint32_t>(i)};
   });
 
+  // A chunk much wider than this is split even when it is under the point
+  // limit. A 24th of the cloud diagonal gives a few thousand chunks on a
+  // city-block map, which culls well without flooding the indirect buffer.
+  float maxExtent = options.maxChunkExtent;
+  if (maxExtent <= 0.0f)
+    maxExtent = std::max(0.5f, length(cloud.boundsLocal.size()) / 24.0f);
+
   std::vector<Node> level{Node{0, static_cast<std::uint32_t>(n), cloud.boundsLocal, 0}};
   std::vector<Node> nextLevel;
   std::vector<Node> leaves;
@@ -211,7 +218,10 @@ std::vector<Chunk> buildChunks(PointCloud& cloud, const ChunkBuildOptions& optio
 
     auto processNode = [&](std::size_t ni, bool innerParallel) {
       const Node& node = level[ni];
-      if (node.count() <= maxPoints || node.depth >= options.maxDepth) {
+      const bool tooMany = node.count() > maxPoints;
+      const bool tooWide = maxComponent(node.box.size()) > maxExtent &&
+                           node.count() > options.minPointsToSplit;
+      if ((!tooMany && !tooWide) || node.depth >= options.maxDepth) {
         isLeaf[ni] = 1;
         return;
       }
@@ -279,7 +289,12 @@ std::vector<Chunk> buildChunks(PointCloud& cloud, const ChunkBuildOptions& optio
         const bool prevTooSmall = prev.count() < minPoints;
         const bool leafTooSmall = leaf.count() < minPoints;
         const bool fits = prev.count() + leaf.count() <= maxPoints;
-        if ((prevTooSmall || leafTooSmall) && fits && prev.hi == leaf.lo) {
+        // Merging must not undo the extent limit: a union box wider than
+        // the limit would reintroduce exactly the chunk the split avoided.
+        Aabbf unionBox = prev.box;
+        unionBox.expand(leaf.box);
+        const bool staysCompact = maxComponent(unionBox.size()) <= maxExtent;
+        if ((prevTooSmall || leafTooSmall) && fits && staysCompact && prev.hi == leaf.lo) {
           prev.hi = leaf.hi;
           prev.box.expand(leaf.box);
           prev.depth = std::min(prev.depth, leaf.depth);
@@ -343,6 +358,42 @@ std::vector<Chunk> buildChunks(PointCloud& cloud, const ChunkBuildOptions& optio
       chunk.spacing = estimateSpacing(box, chunk.pointCount);
     }
   });
+  // Clamp spacing against the cloud's typical value.
+  //
+  // Splat radius is derived from spacing, so a sparse chunk -- 21 stray
+  // returns spread over 20 m -- would otherwise be drawn as 5 m discs.
+  // Its spacing is not wrong; the inference is. Splat size stands for a
+  // point's share of a SURFACE, and scattered noise is not a surface.
+  //
+  // The reference is the point-weighted median, so it reflects where the
+  // data actually is rather than being dragged around by the many small,
+  // sparse chunks at the edges of a scan.
+  if (!chunks.empty()) {
+    std::vector<std::pair<float, std::uint32_t>> bySpacing;
+    bySpacing.reserve(chunks.size());
+    std::uint64_t totalPoints = 0;
+    for (const Chunk& c : chunks) {
+      if (c.spacing > 0.0f && c.pointCount > 0) {
+        bySpacing.emplace_back(c.spacing, c.pointCount);
+        totalPoints += c.pointCount;
+      }
+    }
+    std::sort(bySpacing.begin(), bySpacing.end());
+
+    float medianSpacing = 0.0f;
+    std::uint64_t seen = 0;
+    for (const auto& [spacing, count] : bySpacing) {
+      seen += count;
+      if (seen * 2 >= totalPoints) { medianSpacing = spacing; break; }
+    }
+
+    if (medianSpacing > 0.0f) {
+      const float lo = medianSpacing * 0.25f;
+      const float hi = medianSpacing * 4.0f;
+      for (Chunk& c : chunks) c.spacing = std::clamp(c.spacing, lo, hi);
+    }
+  }
+
   const double boundsMs = boundsTimer.elapsedMs();
 
   if (stats != nullptr) {

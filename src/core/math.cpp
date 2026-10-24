@@ -32,12 +32,18 @@ Mat4 perspectiveReverseZ(float fovYRadians, float aspect, float zNear) {
 }
 
 Mat4 orthographic(float l, float r, float b, float t, float n, float f) {
+  // Reversed Z here too, so the orthographic map view shares the depth
+  // setup with the perspective path: the near plane maps to 1 and the far
+  // plane to 0, against a cleared depth of 0 and GL_GREATER.
+  //
+  // For a view-space z of -d (looking down -Z), the mapping that satisfies
+  // d = n -> 1 and d = f -> 0 is clipZ = (f - d) / (f - n), i.e.
+  // clipZ = z / (f - n) + f / (f - n).
   Mat4 m;
   m[0] = {2.0f / (r - l), 0.0f, 0.0f, 0.0f};
   m[1] = {0.0f, 2.0f / (t - b), 0.0f, 0.0f};
-  // Reversed Z here too, so the ortho map view shares the depth setup.
-  m[2] = {0.0f, 0.0f, 1.0f / (n - f), 0.0f};
-  m[3] = {-(r + l) / (r - l), -(t + b) / (t - b), -f / (n - f), 1.0f};
+  m[2] = {0.0f, 0.0f, 1.0f / (f - n), 0.0f};
+  m[3] = {-(r + l) / (r - l), -(t + b) / (t - b), f / (f - n), 1.0f};
   return m;
 }
 
