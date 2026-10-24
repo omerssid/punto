@@ -13,6 +13,8 @@
 #include "core/log.hpp"
 #include "core/parallel.hpp"
 #include "io/loader.hpp"
+#include "scene/chunk.hpp"
+#include "scene/ram_chunk_source.hpp"
 
 namespace {
 
@@ -156,6 +158,54 @@ void printReport(const PointCloud& cloud, const LoadResult& result) {
   std::printf("\n");
 }
 
+void printChunkReport(const PointCloud& cloud, const std::vector<Chunk>& chunks,
+                      const ChunkBuildStats& stats) {
+  std::printf("  \x1b[1mchunking\x1b[0m  %.0f ms\n", stats.totalMs);
+  std::printf("    partition %.1f  lod-order %.1f  reorder %.1f  bounds %.1f  (ms)\n",
+              stats.partitionMs, stats.lodShuffleMs, stats.reorderMs, stats.boundsMs);
+  std::printf("    chunks        %s\n", withThousands(stats.chunkCount).c_str());
+  std::printf("    points/chunk  min %s  mean %.0f  max %s\n",
+              withThousands(stats.minChunkPoints).c_str(), stats.meanChunkPoints,
+              withThousands(stats.maxChunkPoints).c_str());
+
+  // What the GPU will actually hold.
+  const std::uint64_t n = cloud.size();
+  const std::uint64_t posBytes = n * sizeof(QuantizedPoint);
+  const std::uint64_t colBytes = cloud.hasColors() ? n * 4 : 0;
+  const std::uint64_t scalarBytes = n * 2;
+  const std::uint64_t chunkBytes = chunks.size() * sizeof(GpuChunk);
+  std::printf("    GPU vertex    %s positions + %s colour + %s scalar + %s chunk meta\n",
+              humanBytes(posBytes).c_str(), humanBytes(colBytes).c_str(),
+              humanBytes(scalarBytes).c_str(), humanBytes(chunkBytes).c_str());
+  std::printf("    GPU total     \x1b[1m%s\x1b[0m\n",
+              humanBytes(posBytes + colBytes + scalarBytes + chunkBytes).c_str());
+
+  // Quantization error: worst case is half a step along the longest axis of
+  // the largest chunk.
+  double worstStep = 0.0;
+  double meanSpacing = 0.0;
+  for (const Chunk& c : chunks) {
+    const Vec3f e = c.bounds.size();
+    worstStep = std::max<double>(worstStep, std::max(e.x, std::max(e.y, e.z)) / 65535.0);
+    meanSpacing += c.spacing;
+  }
+  if (!chunks.empty()) meanSpacing /= static_cast<double>(chunks.size());
+  std::printf("    quantization  %.3f mm worst-case error (half a step)\n", worstStep * 500.0);
+  std::printf("    mean spacing  %.1f mm between neighbouring points\n", meanSpacing * 1000.0);
+
+  // Verify the invariant the renderer depends on.
+  std::uint64_t covered = 0;
+  bool contiguous = true;
+  for (std::size_t i = 0; i < chunks.size(); ++i) {
+    covered += chunks[i].pointCount;
+    if (i > 0 && chunks[i].firstPoint != chunks[i - 1].lastPoint()) contiguous = false;
+  }
+  std::printf("    coverage      %s (%s)\n",
+              covered == n ? "\x1b[32mall points in exactly one chunk\x1b[0m" : "\x1b[31mMISMATCH\x1b[0m",
+              contiguous ? "contiguous" : "\x1b[31mnot contiguous\x1b[0m");
+  std::printf("\n");
+}
+
 void usage() {
   std::printf(
       "usage: pcv_probe [options] <file> [<file> ...]\n"
@@ -164,6 +214,8 @@ void usage() {
       "  --no-source-index  do not record each point's source row\n"
       "  --threads N        worker threads (default: all cores)\n"
       "  --bin-fields N     float32 fields per point for raw .bin (default 4)\n"
+      "  --chunks           build the chunk/LOD tree and report it\n"
+      "  --chunk-size N     max points per chunk (default 131072)\n"
       "  -v                 verbose timing\n");
 }
 
@@ -171,6 +223,8 @@ void usage() {
 
 int main(int argc, char** argv) {
   LoadOptions options;
+  ChunkBuildOptions chunkOptions;
+  bool doChunks = false;
   std::vector<std::string> paths;
 
   for (int i = 1; i < argc; ++i) {
@@ -179,6 +233,11 @@ int main(int argc, char** argv) {
     else if (arg == "--no-source-index") options.keepSourceIndex = false;
     else if (arg == "--threads" && i + 1 < argc) options.workers = static_cast<unsigned>(std::atoi(argv[++i]));
     else if (arg == "--bin-fields" && i + 1 < argc) options.rawBinFieldCount = std::atoi(argv[++i]);
+    else if (arg == "--chunks") doChunks = true;
+    else if (arg == "--chunk-size" && i + 1 < argc) {
+      chunkOptions.maxPointsPerChunk = static_cast<unsigned>(std::atoi(argv[++i]));
+      doChunks = true;
+    }
     else if (arg == "-v") setLogLevel(LogLevel::Debug);
     else if (arg == "-h" || arg == "--help") { usage(); return 0; }
     else if (!arg.empty() && arg[0] == '-') { std::printf("unknown option: %s\n", arg.c_str()); usage(); return 2; }
@@ -197,6 +256,12 @@ int main(int argc, char** argv) {
       continue;
     }
     printReport(cloud, result);
+
+    if (doChunks) {
+      ChunkBuildStats stats;
+      const std::vector<Chunk> chunks = buildChunks(cloud, chunkOptions, &stats);
+      printChunkReport(cloud, chunks, stats);
+    }
   }
   return failures == 0 ? 0 : 1;
 }

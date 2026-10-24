@@ -39,6 +39,8 @@ add_library(pcv_core STATIC
   src/io/pcd_loader.cpp
   src/io/ply_loader.cpp
   src/io/las_loader.cpp
+  src/scene/chunk_builder.cpp
+  src/scene/ram_chunk_source.cpp
 )
 target_include_directories(pcv_core PUBLIC src)
 target_link_libraries(pcv_core PUBLIC pcv_flags)
@@ -70,3 +72,7 @@ enable_testing()
 add_executable(pcv_tests tests/test_loaders.cpp)
 target_link_libraries(pcv_tests PRIVATE pcv_core)
 add_test(NAME loaders COMMAND pcv_tests)
+
+add_executable(pcv_chunk_tests tests/test_chunks.cpp)
+target_link_libraries(pcv_chunk_tests PRIVATE pcv_core)
+add_test(NAME chunks COMMAND pcv_chunk_tests)
