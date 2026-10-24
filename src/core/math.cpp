@@ -1,6 +1,6 @@
 #include "core/math.hpp"
 
-namespace pcv {
+namespace punto {
 
 Mat4 lookAt(Vec3f eye, Vec3f center, Vec3f up) {
   const Vec3f f = normalize(center - eye);   // forward
@@ -87,4 +87,4 @@ Mat4 inverse(const Mat4& mat) {
   return result;
 }
 
-}  // namespace pcv
+}  // namespace punto

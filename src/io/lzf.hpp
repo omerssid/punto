@@ -8,7 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace pcv {
+namespace punto {
 
 // Decompresses `inLen` bytes at `in` into the `outLen`-byte buffer at `out`.
 // Returns the number of bytes written, or 0 if the stream is malformed or
@@ -16,4 +16,4 @@ namespace pcv {
 std::size_t lzfDecompress(const std::uint8_t* in, std::size_t inLen, std::uint8_t* out,
                           std::size_t outLen);
 
-}  // namespace pcv
+}  // namespace punto

@@ -11,7 +11,7 @@
 #include "io/point_cloud.hpp"
 #include "scene/chunk.hpp"
 
-namespace pcv {
+namespace punto {
 
 class RamChunkSource final : public ChunkSource {
  public:
@@ -37,4 +37,4 @@ class RamChunkSource final : public ChunkSource {
   std::vector<Chunk> chunks_;
 };
 
-}  // namespace pcv
+}  // namespace punto

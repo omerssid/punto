@@ -9,7 +9,7 @@
 #include <cstring>
 #include <utility>
 
-namespace pcv {
+namespace punto {
 
 MappedFile::~MappedFile() { close(); }
 
@@ -86,4 +86,4 @@ void MappedFile::adviseSequential(std::size_t offset, std::size_t length) const 
   ::madvise(base, length, MADV_WILLNEED);
 }
 
-}  // namespace pcv
+}  // namespace punto

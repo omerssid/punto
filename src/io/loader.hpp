@@ -7,7 +7,7 @@
 
 #include "io/point_cloud.hpp"
 
-namespace pcv {
+namespace punto {
 
 enum class CloudFormat { Unknown, Pcd, Ply, Las, Laz, KittiBin };
 
@@ -64,4 +64,4 @@ LoadResult loadLas(const std::string& path, const LoadOptions& options, PointClo
 LoadResult loadKittiBin(const std::string& path, const LoadOptions& options, PointCloud& out,
                         std::stop_token stop);
 
-}  // namespace pcv
+}  // namespace punto

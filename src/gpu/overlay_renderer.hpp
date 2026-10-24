@@ -20,7 +20,7 @@
 #include "gpu/shader.hpp"
 #include "scene/camera.hpp"
 
-namespace pcv {
+namespace punto {
 
 class OverlayRenderer {
  public:
@@ -72,4 +72,4 @@ constexpr std::uint32_t overlayColor(int r, int g, int b, int a = 255) {
          (static_cast<std::uint32_t>(b) << 16) | (static_cast<std::uint32_t>(a) << 24);
 }
 
-}  // namespace pcv
+}  // namespace punto

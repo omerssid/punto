@@ -15,7 +15,7 @@
 #include "core/math.hpp"
 #include "io/point_cloud.hpp"
 
-namespace pcv {
+namespace punto {
 
 // GPU vertex: position quantized to the owning chunk's bounding box.
 //
@@ -124,4 +124,4 @@ struct ChunkBuildStats {
 std::vector<Chunk> buildChunks(PointCloud& cloud, const ChunkBuildOptions& options,
                                ChunkBuildStats* stats = nullptr);
 
-}  // namespace pcv
+}  // namespace punto

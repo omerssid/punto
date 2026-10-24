@@ -8,7 +8,7 @@
 
 #include "core/log.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 
 std::string readWholeFile(const std::filesystem::path& path, bool& ok) {
@@ -97,16 +97,16 @@ ShaderLibrary::ShaderLibrary() {
   // An explicit override wins; otherwise look for the source tree's shader
   // directory, which is present during development and absent when the
   // binary is installed elsewhere.
-  if (const char* env = std::getenv("PCV_SHADER_DIR")) {
+  if (const char* env = std::getenv("PUNTO_SHADER_DIR")) {
     if (std::filesystem::is_directory(env)) {
       diskDir_ = env;
     } else {
-      logWarn("PCV_SHADER_DIR='{}' is not a directory; using built-in shaders", env);
+      logWarn("PUNTO_SHADER_DIR='{}' is not a directory; using built-in shaders", env);
     }
   }
-#ifdef PCV_SOURCE_SHADER_DIR
-  if (diskDir_.empty() && std::filesystem::is_directory(PCV_SOURCE_SHADER_DIR))
-    diskDir_ = PCV_SOURCE_SHADER_DIR;
+#ifdef PUNTO_SOURCE_SHADER_DIR
+  if (diskDir_.empty() && std::filesystem::is_directory(PUNTO_SOURCE_SHADER_DIR))
+    diskDir_ = PUNTO_SOURCE_SHADER_DIR;
 #endif
   if (!diskDir_.empty()) logInfo("shader live reload from {}", diskDir_);
 }
@@ -331,4 +331,4 @@ void ShaderProgram::set(const char* name, const Mat4& m) {
   if (l >= 0) glUniformMatrix4fv(l, 1, GL_FALSE, m.data());
 }
 
-}  // namespace pcv
+}  // namespace punto

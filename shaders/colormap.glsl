@@ -4,8 +4,8 @@
 // texture binding, no sampler state, and the cost is a handful of FMAs.
 // Both are perceptually uniform, which matters because the whole point of
 // colouring by intensity or height is to read magnitude off the image.
-#ifndef PCV_COLORMAP_GLSL
-#define PCV_COLORMAP_GLSL
+#ifndef PUNTO_COLORMAP_GLSL
+#define PUNTO_COLORMAP_GLSL
 
 #define RAMP_VIRIDIS   0
 #define RAMP_TURBO     1
@@ -92,4 +92,4 @@ vec3 chunkDebugColor(uint index) {
          * (1.0 / 255.0) * 0.7 + 0.3;
 }
 
-#endif  // PCV_COLORMAP_GLSL
+#endif  // PUNTO_COLORMAP_GLSL

@@ -3,7 +3,7 @@
 
 #include <string>
 
-namespace pcv {
+namespace punto {
 
 enum class GpuPreference { Auto, Discrete, Integrated };
 
@@ -48,4 +48,4 @@ PrimeTopology detectPrimeTopology();
 // An explicit --gpu nvidia always forces it.
 void applyGpuPreference(GpuPreference preference, const PrimeTopology& topology);
 
-}  // namespace pcv
+}  // namespace punto

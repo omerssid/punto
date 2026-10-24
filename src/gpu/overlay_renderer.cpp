@@ -4,7 +4,7 @@
 
 #include "core/log.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 constexpr int kMarkerSegments = 32;
 }  // namespace
@@ -154,4 +154,4 @@ void OverlayRenderer::draw(const Camera& camera, int width, int height, float li
   glDisable(GL_BLEND);
 }
 
-}  // namespace pcv
+}  // namespace punto

@@ -10,7 +10,7 @@
 #include <cmath>
 #include <limits>
 
-namespace pcv {
+namespace punto {
 
 inline constexpr double kPi = 3.14159265358979323846;
 
@@ -168,4 +168,4 @@ struct AabbT {
 using Aabb = AabbT<double>;
 using Aabbf = AabbT<float>;
 
-}  // namespace pcv
+}  // namespace punto

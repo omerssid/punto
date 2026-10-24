@@ -14,7 +14,7 @@
 
 #include "io/cloud_builder.hpp"
 
-namespace pcv {
+namespace punto {
 
 // True when this build can decompress LAZ.
 bool lazSupported();
@@ -30,4 +30,4 @@ bool decodeLazPoints(const std::string& path, const std::vector<SourceField>& fi
                      unsigned workers, std::stop_token stop, std::vector<std::byte>& records,
                      std::vector<std::string>& warnings, std::string& error);
 
-}  // namespace pcv
+}  // namespace punto

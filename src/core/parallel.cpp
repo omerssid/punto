@@ -4,7 +4,7 @@
 #include <charconv>
 #include <string_view>
 
-namespace pcv {
+namespace punto {
 namespace {
 
 // Below this, thread-spawn overhead outweighs any gain.
@@ -35,7 +35,7 @@ unsigned clampWorkers(std::size_t n, unsigned workers) {
 }  // namespace
 
 unsigned defaultWorkerCount() {
-  if (const char* env = std::getenv("PCV_THREADS")) {
+  if (const char* env = std::getenv("PUNTO_THREADS")) {
     unsigned v = 0;
     const std::string_view sv(env);
     if (std::from_chars(sv.data(), sv.data() + sv.size(), v).ec == std::errc{} && v > 0) return v;
@@ -81,4 +81,4 @@ void parallelRangesCancellable(
   body(ranges[0].first, ranges[0].second, 0, stop);
 }
 
-}  // namespace pcv
+}  // namespace punto

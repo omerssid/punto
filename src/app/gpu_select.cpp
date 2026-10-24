@@ -4,12 +4,12 @@
 
 #include "core/log.hpp"
 
-#ifdef PCV_HAVE_XRANDR
+#ifdef PUNTO_HAVE_XRANDR
 #include <X11/Xlib.h>
 #include <X11/extensions/Xrandr.h>
 #endif
 
-namespace pcv {
+namespace punto {
 
 bool parseGpuPreference(const std::string& text, GpuPreference& out) {
   if (text == "auto") { out = GpuPreference::Auto; return true; }
@@ -24,7 +24,7 @@ bool parseGpuPreference(const std::string& text, GpuPreference& out) {
   return false;
 }
 
-#ifndef PCV_HAVE_XRANDR
+#ifndef PUNTO_HAVE_XRANDR
 
 PrimeTopology detectPrimeTopology() { return PrimeTopology{}; }
 
@@ -78,7 +78,7 @@ PrimeTopology detectPrimeTopology() {
   return topology;
 }
 
-#endif  // PCV_HAVE_XRANDR
+#endif  // PUNTO_HAVE_XRANDR
 
 void applyGpuPreference(GpuPreference preference, const PrimeTopology& topology) {
   if (preference == GpuPreference::Integrated) {
@@ -110,4 +110,4 @@ void applyGpuPreference(GpuPreference preference, const PrimeTopology& topology)
             topology.sinkProviderName);
 }
 
-}  // namespace pcv
+}  // namespace punto

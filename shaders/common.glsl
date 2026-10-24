@@ -1,9 +1,9 @@
 // Shared declarations for the point pipeline.
 //
-// Mirrors pcv::GpuChunk in src/scene/chunk.hpp. The two layouts must agree
+// Mirrors punto::GpuChunk in src/scene/chunk.hpp. The two layouts must agree
 // exactly: vec4s first so nothing straddles a 16-byte std430 boundary.
-#ifndef PCV_COMMON_GLSL
-#define PCV_COMMON_GLSL
+#ifndef PUNTO_COMMON_GLSL
+#define PUNTO_COMMON_GLSL
 
 struct GpuChunk {
   vec4 boundsMin;  // xyz = minimum corner, w = mean point spacing in metres
@@ -24,7 +24,7 @@ struct GpuChunk {
 #define BIND_SCALARS    6
 #define BIND_PICK       7
 
-// Colour sources, matching pcv::ColorMode.
+// Colour sources, matching punto::ColorMode.
 #define COLOR_MODE_RGB      0
 #define COLOR_MODE_SCALAR   1
 #define COLOR_MODE_FLAT     2
@@ -53,4 +53,4 @@ vec3 unpackColor(uint rgba) {
          * (1.0 / 255.0);
 }
 
-#endif  // PCV_COMMON_GLSL
+#endif  // PUNTO_COMMON_GLSL

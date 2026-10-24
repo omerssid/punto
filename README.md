@@ -1,7 +1,11 @@
-# pcd_viewer
+# punto
 
 A GPU-driven point cloud viewer for large clouds. Opens a 32-million-point
 HD map in about a second and draws it in under half a millisecond a frame.
+
+Reads PCD, PLY, LAS, LAZ and raw KITTI `.bin`. The name is deliberately not
+a format and not a verb: viewing is what exists today, and processing is
+where this is going.
 
 ![The viewer with a 32M-point HD map open](docs/screenshot.png)
 
@@ -72,21 +76,21 @@ found. Shaders are embedded into the binary, which is a single ~2 MB file.
 
 | CMake option | Default | |
 | --- | --- | --- |
-| `PCV_NATIVE_ARCH` | `ON` | `-march=native`. **Turn off for binaries you distribute** — otherwise they crash on older CPUs. |
-| `PCV_WERROR` | `OFF` | warnings as errors |
+| `PUNTO_NATIVE_ARCH` | `ON` | `-march=native`. **Turn off for binaries you distribute** — otherwise they crash on older CPUs. |
+| `PUNTO_WERROR` | `OFF` | warnings as errors |
 
-Two environment variables are read at runtime: `PCV_THREADS` caps worker
-threads, and `PCV_GL_SYNC_DEBUG=1` forces synchronous GL debug output, which
+Two environment variables are read at runtime: `PUNTO_THREADS` caps worker
+threads, and `PUNTO_GL_SYNC_DEBUG=1` forces synchronous GL debug output, which
 reports driver errors at the call that caused them but serialises the
-pipeline. `PCV_SHADER_DIR` points the shader loader at a directory so `R`
+pipeline. `PUNTO_SHADER_DIR` points the shader loader at a directory so `R`
 reloads from disk.
 
 ## Using it
 
 ```sh
-./build/pcd_viewer cloud.pcd          # or drag a file onto the window
-./build/pcd_viewer --color scalar --field intensity --ramp turbo scan.las
-./build/pcd_viewer --nav top map.laz  # open straight into the map view
+./build/punto-viewer cloud.pcd          # or drag a file onto the window
+./build/punto-viewer --color scalar --field intensity --ramp turbo scan.las
+./build/punto-viewer --nav top map.laz  # open straight into the map view
 ```
 
 ![Top-down map view coloured by height](docs/screenshot-topdown.png)
@@ -147,7 +151,7 @@ separately.
 The same report is available from the terminal:
 
 ```
-$ pcv_probe map.pcd
+$ punto-probe map.pcd
 
   format        PCD (binary)
   file size     492.9 MB
@@ -254,7 +258,7 @@ Pushing to the default branch replaces a rolling `latest` prerelease;
 pushing a `v*` tag cuts a permanent one. Both attach a tarball of the two
 binaries with a SHA-256 sum.
 
-Release builds set `-DPCV_NATIVE_ARCH=OFF` and run on Ubuntu 22.04. Both
+Release builds set `-DPUNTO_NATIVE_ARCH=OFF` and run on Ubuntu 22.04. Both
 matter: `-march=native` would bake in whatever instructions the build
 machine happens to have, and a binary runs on the glibc it was built
 against or newer, so building on 22.04 covers 22.04 and 24.04 while
@@ -267,8 +271,23 @@ file is refused with instructions rather than crashing.
 
 ## Status
 
-In-core, comfortable to about 150 M points. Out-of-core streaming is the
-next phase and the interface for it is already in place.
+Viewing is complete and in daily use. In-core, comfortable to about 150 M
+points.
+
+Planned, in rough order:
+
+- **Out-of-core streaming**, for clouds past 150 M points. The `ChunkSource`
+  interface the renderer draws through already exists for this; a
+  disk-backed implementation slots in behind it without the renderer, LOD
+  selector, culling pass or UI changing.
+- **Post-processing** — filtering, downsampling, normal estimation.
+- **Segmentation and object removal** — isolating and deleting things like
+  parked cars from a map.
+
+The last two need something the current design does not have: the cloud is
+loaded once and treated as immutable all the way down, so editing it means
+reworking how chunks, the GPU buffers and the source-row mapping stay in
+step when points disappear. Worth knowing before building on this.
 
 ## Attribution
 

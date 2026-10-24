@@ -7,7 +7,7 @@
 #include "core/log.hpp"
 #include "core/parallel.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 
 constexpr std::size_t kHistogramBins = 256;
@@ -274,4 +274,4 @@ void PointCloud::clear() {
   width = height = 0;
 }
 
-}  // namespace pcv
+}  // namespace punto

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace pcv {
+namespace punto {
 namespace {
 
 constexpr Vec3f kWorldUp{0.0f, 0.0f, 1.0f};
@@ -314,4 +314,4 @@ void Camera::setMode(NavMode newMode, float /*aspect*/) {
   mode = newMode;
 }
 
-}  // namespace pcv
+}  // namespace punto

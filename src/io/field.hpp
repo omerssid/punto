@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 
-namespace pcv {
+namespace punto {
 
 enum class FieldType : std::uint8_t { I8, I16, I32, I64, U8, U16, U32, U64, F32, F64 };
 
@@ -132,4 +132,4 @@ decltype(auto) ScalarColumn::visit(Fn&& fn) const {
 // Computes stats (and histogram) for a column, in parallel across workers.
 FieldStats computeFieldStats(const ScalarColumn& column, FieldRole role);
 
-}  // namespace pcv
+}  // namespace punto

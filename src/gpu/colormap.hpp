@@ -11,7 +11,7 @@
 
 #include "core/math.hpp"
 
-namespace pcv {
+namespace punto {
 
 enum class ColorRamp : int;  // defined in point_renderer.hpp
 
@@ -88,4 +88,4 @@ inline Vec3f evaluateRamp(int ramp, float t) {
   }
 }
 
-}  // namespace pcv
+}  // namespace punto

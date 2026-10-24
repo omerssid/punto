@@ -9,7 +9,7 @@
 
 #include "core/large_buffer.hpp"
 
-namespace pcv {
+namespace punto {
 
 // Sorts keys[0, count) by the `bitCount` bits starting at `firstBit`.
 //
@@ -21,4 +21,4 @@ namespace pcv {
 void radixSortByBits(std::uint64_t* keys, std::uint64_t* scratch, std::size_t count,
                      int firstBit, int bitCount, unsigned workers = 0);
 
-}  // namespace pcv
+}  // namespace punto

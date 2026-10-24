@@ -7,7 +7,7 @@
 
 #include "core/parallel.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 
 constexpr int kRadixBits = 8;
@@ -69,4 +69,4 @@ void radixSortByBits(std::uint64_t* keys, std::uint64_t* scratch, std::size_t co
   if (src != keys) std::memcpy(keys, src, count * sizeof(std::uint64_t));
 }
 
-}  // namespace pcv
+}  // namespace punto

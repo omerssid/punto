@@ -8,13 +8,13 @@
 #include "core/math.hpp"
 #include "gpu/gl.hpp"
 
-namespace pcv {
+namespace punto {
 
 // Where shader sources come from.
 //
 // Sources are compiled into the binary so the viewer is a single file with
 // nothing to install. When a shader directory is present (set via
-// PCV_SHADER_DIR, or found next to the source tree during development) it
+// PUNTO_SHADER_DIR, or found next to the source tree during development) it
 // takes priority, which is what makes live reload possible.
 class ShaderLibrary {
  public:
@@ -97,4 +97,4 @@ class ShaderProgram {
   std::vector<std::string> defines_;
 };
 
-}  // namespace pcv
+}  // namespace punto

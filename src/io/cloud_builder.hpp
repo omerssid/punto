@@ -19,7 +19,7 @@
 #include "io/loader.hpp"
 #include "io/point_cloud.hpp"
 
-namespace pcv {
+namespace punto {
 
 // One field as the source file declares it.
 struct SourceField {
@@ -127,4 +127,4 @@ void compactInvalidPoints(PointCloud& cloud, std::uint64_t invalidCount);
 // True when every coordinate of point i is finite.
 bool positionFinite(const Vec3f& p);
 
-}  // namespace pcv
+}  // namespace punto

@@ -13,7 +13,7 @@
 
 struct GLFWwindow;
 
-namespace pcv {
+namespace punto {
 
 // A point the user picked, resolved against the cloud.
 struct PickedPoint {
@@ -160,4 +160,4 @@ class Ui {
   unsigned dockspaceId_ = 0;
 };
 
-}  // namespace pcv
+}  // namespace punto

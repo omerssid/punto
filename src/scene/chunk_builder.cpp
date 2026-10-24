@@ -21,7 +21,7 @@
 #include "scene/morton.hpp"
 #include "scene/radix_sort.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 
 // A leaf of the linear octree: a run of the sorted key array.
@@ -303,4 +303,4 @@ std::vector<Chunk> buildChunks(PointCloud& cloud, const ChunkBuildOptions& optio
   return chunks;
 }
 
-}  // namespace pcv
+}  // namespace punto

@@ -8,7 +8,7 @@
 #include "core/log.hpp"
 #include "core/parallel.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 
 // Unaligned load. Record fields routinely sit at odd offsets, so this cannot
@@ -434,4 +434,4 @@ void compactInvalidPoints(PointCloud& cloud, std::uint64_t invalidCount) {
   }
 }
 
-}  // namespace pcv
+}  // namespace punto

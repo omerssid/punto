@@ -61,11 +61,11 @@ void beginTest(const char* name) {
 }
 
 std::filesystem::path fixtureDir() {
-  if (const char* env = std::getenv("PCV_FIXTURES")) return env;
+  if (const char* env = std::getenv("PUNTO_FIXTURES")) return env;
   return std::filesystem::path(__FILE__).parent_path() / "fixtures";
 }
 
-using namespace pcv;
+using namespace punto;
 
 bool fixtureExists(const std::string& name) {
   return std::filesystem::exists(fixtureDir() / name);

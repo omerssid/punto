@@ -7,7 +7,7 @@
 
 #include "gpu/gl.hpp"
 
-namespace pcv {
+namespace punto {
 
 class GlBuffer {
  public:
@@ -150,4 +150,4 @@ struct DrawArraysIndirectCommand {
 };
 static_assert(sizeof(DrawArraysIndirectCommand) == 16);
 
-}  // namespace pcv
+}  // namespace punto

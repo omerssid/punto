@@ -9,7 +9,7 @@
 
 #include "core/parallel.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 
 // A column with at most this many distinct values is treated as categorical
@@ -284,4 +284,4 @@ FieldStats computeFieldStats(const ScalarColumn& column, FieldRole role) {
   return stats;
 }
 
-}  // namespace pcv
+}  // namespace punto

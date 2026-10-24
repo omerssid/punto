@@ -1,5 +1,5 @@
 // LAS reader. LAZ is the same container with compressed point records and
-// needs laszip, which is gated behind PCV_HAVE_LASZIP.
+// needs laszip, which is gated behind PUNTO_HAVE_LASZIP.
 //
 // Unlike PCD and PLY, LAS has a fixed schema: a point data record format
 // number selects one of eleven layouts. Coordinates are stored as 32-bit
@@ -20,7 +20,7 @@
 #include "io/laz_decode.hpp"
 #include "io/mapped_file.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 
 struct LasHeader {
@@ -377,4 +377,4 @@ LoadResult loadLas(const std::string& path, const LoadOptions& options, PointClo
   return result;
 }
 
-}  // namespace pcv
+}  // namespace punto

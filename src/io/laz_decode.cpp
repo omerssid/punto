@@ -7,13 +7,13 @@
 #include "core/log.hpp"
 #include "core/parallel.hpp"
 
-#ifdef PCV_HAVE_LASZIP
+#ifdef PUNTO_HAVE_LASZIP
 #include <laszip/laszip_api.h>
 #endif
 
-namespace pcv {
+namespace punto {
 
-#ifndef PCV_HAVE_LASZIP
+#ifndef PUNTO_HAVE_LASZIP
 
 bool lazSupported() { return false; }
 
@@ -274,6 +274,6 @@ bool decodeLazPoints(const std::string& path, const std::vector<SourceField>& fi
   return true;
 }
 
-#endif  // PCV_HAVE_LASZIP
+#endif  // PUNTO_HAVE_LASZIP
 
-}  // namespace pcv
+}  // namespace punto

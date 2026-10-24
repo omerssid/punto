@@ -11,7 +11,7 @@
 #include <string>
 #include <string_view>
 
-namespace pcv {
+namespace punto {
 
 class MappedFile {
  public:
@@ -44,4 +44,4 @@ class MappedFile {
   std::size_t size_ = 0;
 };
 
-}  // namespace pcv
+}  // namespace punto

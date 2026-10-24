@@ -19,7 +19,7 @@
 #include <new>
 #include <utility>
 
-namespace pcv {
+namespace punto {
 
 template <typename T>
 class LargeBuffer {
@@ -91,4 +91,4 @@ class LargeBuffer {
   std::size_t bytes_ = 0;
 };
 
-}  // namespace pcv
+}  // namespace punto

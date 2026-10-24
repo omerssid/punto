@@ -15,7 +15,7 @@
 #include "gpu/colormap.hpp"
 #include "gpu/gl.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 
 std::string withThousands(std::uint64_t v) {
@@ -240,7 +240,7 @@ bool Ui::initialize(GLFWwindow* window, std::string& error) {
   // working directory.
   const char* home = std::getenv("HOME");
   if (home != nullptr) {
-    const std::filesystem::path dir = std::filesystem::path(home) / ".config" / "pcd_viewer";
+    const std::filesystem::path dir = std::filesystem::path(home) / ".config" / "punto";
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
     if (!ec) {
@@ -435,7 +435,7 @@ UiActions Ui::draw(const UiInput& input, RenderSettings& settings, Camera& camer
 
   // PassthruCentralNode leaves the middle undrawn, which is what lets the
   // viewport render underneath instead of behind an opaque panel.
-  const ImGuiID dockspaceId = ImGui::GetID("pcv_dockspace");
+  const ImGuiID dockspaceId = ImGui::GetID("punto_dockspace");
   dockspaceId_ = dockspaceId;
   ImGui::DockSpace(dockspaceId, ImVec2(0, 0), ImGuiDockNodeFlags_PassthruCentralNode);
 
@@ -1442,4 +1442,4 @@ void Ui::drawHelpWindow() {
   ImGui::End();
 }
 
-}  // namespace pcv
+}  // namespace punto

@@ -14,7 +14,7 @@
 #include "core/math.hpp"
 #include "io/field.hpp"
 
-namespace pcv {
+namespace punto {
 
 // Where the load spent its time. Surfaced in the UI so a slow open is
 // immediately attributable rather than mysterious.
@@ -136,4 +136,4 @@ class PointCloud {
   void clear();
 };
 
-}  // namespace pcv
+}  // namespace punto

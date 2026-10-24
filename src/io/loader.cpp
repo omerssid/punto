@@ -10,7 +10,7 @@
 #include "io/cloud_builder.hpp"
 #include "io/mapped_file.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 
 std::string lowerExtension(const std::string& path) {
@@ -164,4 +164,4 @@ LoadResult loadPointCloud(const std::string& path, const LoadOptions& options, P
   return LoadResult::failure("unrecognised point cloud format: " + path);
 }
 
-}  // namespace pcv
+}  // namespace punto

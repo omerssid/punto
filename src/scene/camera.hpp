@@ -10,7 +10,7 @@
 
 #include "core/math.hpp"
 
-namespace pcv {
+namespace punto {
 
 enum class NavMode {
   Orbit,    // turntable about a focus point
@@ -109,4 +109,4 @@ class Camera {
   Vec3f orbitOffset() const;
 };
 
-}  // namespace pcv
+}  // namespace punto

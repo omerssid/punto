@@ -59,10 +59,10 @@ void fail(const char* file, int line, const std::string& what) {
 
 void beginTest(const char* name) { std::printf("\x1b[1m%s\x1b[0m\n", name); }
 
-using namespace pcv;
+using namespace punto;
 
 std::filesystem::path fixtureDir() {
-  if (const char* env = std::getenv("PCV_FIXTURES")) return env;
+  if (const char* env = std::getenv("PUNTO_FIXTURES")) return env;
   return std::filesystem::path(__FILE__).parent_path() / "fixtures";
 }
 

@@ -1,4 +1,4 @@
-// pcv_probe -- inspect a point cloud from the terminal.
+// punto-probe -- inspect a point cloud from the terminal.
 //
 // Prints what pcl_viewer never tells you: every declared field with its type,
 // range, mean and distribution; the exact bounding box; invalid point counts;
@@ -19,7 +19,7 @@
 
 namespace {
 
-using namespace pcv;
+using namespace punto;
 
 // Renders a histogram as one line of block characters.
 std::string sparkline(const std::vector<std::uint32_t>& bins, std::size_t width) {
@@ -239,7 +239,7 @@ void printChunkReport(const PointCloud& cloud, const std::vector<Chunk>& chunks,
 
 void usage() {
   std::printf(
-      "usage: pcv_probe [options] <file> [<file> ...]\n"
+      "usage: punto-probe [options] <file> [<file> ...]\n"
       "\n"
       "  --keep-invalid     retain points with NaN/Inf coordinates\n"
       "  --no-source-index  do not record each point's source row\n"

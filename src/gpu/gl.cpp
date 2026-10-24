@@ -5,7 +5,7 @@
 
 #include "core/log.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 
 // NVIDIA: GL_NVX_gpu_memory_info
@@ -84,11 +84,11 @@ void installGlDebugCallback() {
 #else
   constexpr bool kSynchronousByDefault = false;
 #endif
-  const char* env = std::getenv("PCV_GL_SYNC_DEBUG");
+  const char* env = std::getenv("PUNTO_GL_SYNC_DEBUG");
   const bool synchronous = env != nullptr ? (env[0] == '1') : kSynchronousByDefault;
   if (synchronous) {
     glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-    logDebug("synchronous GL debug output enabled (slow; unset PCV_GL_SYNC_DEBUG to disable)");
+    logDebug("synchronous GL debug output enabled (slow; unset PUNTO_GL_SYNC_DEBUG to disable)");
   } else {
     glDisable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
   }
@@ -130,6 +130,7 @@ GlDeviceInfo queryGlDevice() {
     glGetIntegerv(kNvxTotalMemoryKB, &kb);
     info.totalVramMB = kb / 1024;
   }
+  // No equivalent on Mesa; totalVramMB stays 0 and the UI omits the row.
   // A discrete GPU is the thing we actually want; the vendor string is the
   // only portable signal, and it only has to be right enough to display.
   const std::string& r = info.renderer;
@@ -140,17 +141,29 @@ GlDeviceInfo queryGlDevice() {
 }
 
 int queryFreeVramMB() {
-  // Clear any pre-existing error so a failed query is distinguishable.
-  while (glGetError() != GL_NO_ERROR) {
-  }
-  GLint kb = 0;
-  glGetIntegerv(kNvxCurrentAvailableKB, &kb);
-  if (glGetError() == GL_NO_ERROR && kb > 0) return kb / 1024;
+  // Ask only for what the driver advertises.
+  //
+  // Probing these vendor enums and swallowing the resulting GL_INVALID_ENUM
+  // works, but the debug callback still reports every one -- and the UI
+  // calls this once a frame, so on a driver supporting neither extension it
+  // buries the log in errors that are not errors. Resolved once, because
+  // the answer cannot change for the life of the context.
+  static const bool hasNvx = hasExtension("GL_NVX_gpu_memory_info");
+  static const bool hasAti = hasExtension("GL_ATI_meminfo");
 
-  GLint ati[4] = {0, 0, 0, 0};
-  glGetIntegerv(kAtiVboFreeMemory, ati);
-  if (glGetError() == GL_NO_ERROR && ati[0] > 0) return ati[0] / 1024;
+  if (hasNvx) {
+    GLint kb = 0;
+    glGetIntegerv(kNvxCurrentAvailableKB, &kb);
+    if (kb > 0) return kb / 1024;
+  }
+  if (hasAti) {
+    GLint ati[4] = {0, 0, 0, 0};
+    glGetIntegerv(kAtiVboFreeMemory, ati);
+    if (ati[0] > 0) return ati[0] / 1024;
+  }
+  // Integrated GPUs generally share system memory and report nothing;
+  // callers treat 0 as "unknown" and omit the readout.
   return 0;
 }
 
-}  // namespace pcv
+}  // namespace punto

@@ -5,7 +5,7 @@
 
 #include "core/log.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 
 // Chunks per compute workgroup; must match local_size_x in cull.comp.
@@ -628,4 +628,4 @@ bool PointRenderer::pick(const Camera& camera, int width, int height, int mouseX
   return found;
 }
 
-}  // namespace pcv
+}  // namespace punto

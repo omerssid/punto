@@ -17,7 +17,7 @@
 #include "io/lzf.hpp"
 #include "io/mapped_file.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 
 enum class PcdData { Ascii, Binary, BinaryCompressed };
@@ -440,4 +440,4 @@ LoadResult loadPcd(const std::string& path, const LoadOptions& options, PointClo
   return result;
 }
 
-}  // namespace pcv
+}  // namespace punto

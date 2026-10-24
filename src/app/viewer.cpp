@@ -14,7 +14,7 @@
 #include "gpu/overlay_renderer.hpp"
 #include "gpu/shader.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 
 constexpr double kOrbitRadiansPerPixel = 0.006;
@@ -54,7 +54,7 @@ bool Viewer::createWindow(const ViewerOptions& options, const PrimeTopology& top
   const bool headless = !options.screenshotPath.empty();
   if (headless) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 
-  window_ = glfwCreateWindow(options.width, options.height, "pcd_viewer", nullptr, nullptr);
+  window_ = glfwCreateWindow(options.width, options.height, "punto", nullptr, nullptr);
   if (window_ == nullptr) {
     logError("could not create an OpenGL 4.6 core context");
     glfwTerminate();
@@ -739,4 +739,4 @@ int Viewer::run(const ViewerOptions& options) {
   return 0;
 }
 
-}  // namespace pcv
+}  // namespace punto

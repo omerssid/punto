@@ -14,9 +14,9 @@
 #include <thread>
 #include <vector>
 
-namespace pcv {
+namespace punto {
 
-// Number of workers to use by default. Honours PCV_THREADS if set.
+// Number of workers to use by default. Honours PUNTO_THREADS if set.
 unsigned defaultWorkerCount();
 
 // Calls body(begin, end, workerIndex) once per worker on disjoint
@@ -36,4 +36,4 @@ void parallelRangesCancellable(
     std::size_t n, unsigned workers, std::stop_token stop,
     const std::function<void(std::size_t, std::size_t, unsigned, const std::stop_token&)>& body);
 
-}  // namespace pcv
+}  // namespace punto

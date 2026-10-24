@@ -17,8 +17,8 @@ env:
   # result is a SIGILL on startup rather than a graceful failure.
   CMAKE_FLAGS: >-
     -DCMAKE_BUILD_TYPE=Release
-    -DPCV_NATIVE_ARCH=OFF
-    -DPCV_WERROR=ON
+    -DPUNTO_NATIVE_ARCH=OFF
+    -DPUNTO_WERROR=ON
 
 jobs:
   build:
@@ -61,9 +61,9 @@ jobs:
         # link or a missing runtime symbol, which is most of what goes
         # wrong between a green build and an unusable download.
         run: |
-          ./build/pcd_viewer --help > /dev/null
-          ./build/pcv_probe tests/fixtures/helix_binary.pcd > /dev/null
-          ./build/pcv_probe tests/fixtures/helix_12_fmt3.laz > /dev/null
+          ./build/punto-viewer --help > /dev/null
+          ./build/punto-probe tests/fixtures/helix_binary.pcd > /dev/null
+          ./build/punto-probe tests/fixtures/helix_12_fmt3.laz > /dev/null
           echo "binaries run"
 
       - name: Package
@@ -77,19 +77,19 @@ jobs:
           else
             version="$(git rev-parse --short HEAD)"
           fi
-          name="pcd_viewer-${version}-linux-x86_64"
+          name="punto-${version}-linux-x86_64"
           echo "name=${name}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
           mkdir -p "dist/${name}"
-          cp build/pcd_viewer build/pcv_probe "dist/${name}/"
+          cp build/punto-viewer build/punto-probe "dist/${name}/"
           cp README.md "dist/${name}/"
-          strip "dist/${name}/pcd_viewer" "dist/${name}/pcv_probe"
+          strip "dist/${name}/punto-viewer" "dist/${name}/punto-probe"
 
           # The binaries link against the system GL, GLFW, GLEW and laszip,
           # so say exactly what a machine needs to run them.
           cat > "dist/${name}/INSTALL.txt" <<'EOF'
-          pcd_viewer -- Linux x86_64
+          punto -- Linux x86_64
 
           Built on Ubuntu 22.04 (glibc 2.35). Runs on Ubuntu 22.04 or newer,
           and on other distributions with a comparable glibc.
@@ -103,7 +103,7 @@ jobs:
 
           Then:
 
-            ./pcd_viewer your_cloud.pcd
+            ./punto-viewer your_cloud.pcd
 
           These binaries are built without -march=native, so they run on any
           x86-64 CPU. Building from source with the default settings produces
@@ -193,4 +193,4 @@ jobs:
           ctest --test-dir build --output-on-failure
 
       - name: LAS still reads without laszip
-        run: ./build/pcv_probe tests/fixtures/helix_12_fmt3.las | grep -q "LAS 1.2"
+        run: ./build/punto-probe tests/fixtures/helix_12_fmt3.las | grep -q "LAS 1.2"

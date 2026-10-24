@@ -17,7 +17,7 @@
 #include "scene/camera.hpp"
 #include "scene/chunk.hpp"
 
-namespace pcv {
+namespace punto {
 
 enum class ColorMode : int { Rgb = 0, Scalar = 1, Flat = 2, ChunkId = 3 };
 enum class ColorRamp : int {
@@ -204,4 +204,4 @@ class PointRenderer {
   RenderStats stats_;
 };
 
-}  // namespace pcv
+}  // namespace punto

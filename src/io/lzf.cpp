@@ -1,6 +1,6 @@
 #include "io/lzf.hpp"
 
-namespace pcv {
+namespace punto {
 
 // Control-byte encoding:
 //   ctrl < 32              -> literal run of (ctrl + 1) bytes follows
@@ -51,4 +51,4 @@ std::size_t lzfDecompress(const std::uint8_t* in, std::size_t inLen, std::uint8_
   return op;
 }
 
-}  // namespace pcv
+}  // namespace punto

@@ -5,7 +5,7 @@
 #include <cstring>
 #include <utility>
 
-namespace pcv {
+namespace punto {
 namespace {
 
 constexpr float kQuantMax = 65535.0f;
@@ -92,4 +92,4 @@ bool RamChunkSource::readChunkScalars(std::size_t chunkIndex, int fieldIndex, do
   return true;
 }
 
-}  // namespace pcv
+}  // namespace punto

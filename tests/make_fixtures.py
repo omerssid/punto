@@ -287,13 +287,13 @@ def main():
     # against data written by the reference implementation. Built by cmake
     # only when liblaszip-dev is present.
     make_laz = None
-    for candidate in ("build/pcv_make_laz", "../build/pcv_make_laz",
-                      os.path.join(HERE, "..", "build", "pcv_make_laz")):
+    for candidate in ("build/punto-make-laz", "../build/punto-make-laz",
+                      os.path.join(HERE, "..", "build", "punto-make-laz")):
         if os.path.exists(candidate):
             make_laz = candidate
             break
     if make_laz is None:
-        print("  note: pcv_make_laz not built; skipping LAZ fixtures "
+        print("  note: punto-make-laz not built; skipping LAZ fixtures "
               "(install liblaszip-dev and re-run cmake)", file=sys.stderr)
     else:
         for stem in ("helix_12_fmt3", "helix_14_fmt7", "helix_12_fmt0"):

@@ -16,7 +16,7 @@
 
 struct GLFWwindow;
 
-namespace pcv {
+namespace punto {
 
 struct ViewerOptions {
   std::vector<std::string> files;
@@ -158,4 +158,4 @@ class Viewer {
   double activeScalarHi_ = 1.0;
 };
 
-}  // namespace pcv
+}  // namespace punto

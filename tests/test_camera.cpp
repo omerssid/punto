@@ -38,7 +38,7 @@ void fail(const char* file, int line, const std::string& what) {
 
 void beginTest(const char* name) { std::printf("\x1b[1m%s\x1b[0m\n", name); }
 
-using namespace pcv;
+using namespace punto;
 
 Camera framedCamera() {
   Camera camera;

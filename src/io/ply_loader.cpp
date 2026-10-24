@@ -17,7 +17,7 @@
 #include "io/cloud_builder.hpp"
 #include "io/mapped_file.hpp"
 
-namespace pcv {
+namespace punto {
 namespace {
 
 enum class PlyFormat { Ascii, BinaryLittleEndian, BinaryBigEndian };
@@ -388,4 +388,4 @@ LoadResult loadPly(const std::string& path, const LoadOptions& options, PointClo
   return result;
 }
 
-}  // namespace pcv
+}  // namespace punto

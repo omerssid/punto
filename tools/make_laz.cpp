@@ -22,7 +22,7 @@ std::string errorOf(laszip_POINTER handle) {
 
 int main(int argc, char** argv) {
   if (argc != 3) {
-    std::printf("usage: pcv_make_laz <in.las> <out.laz>\n");
+    std::printf("usage: punto-make-laz <in.las> <out.laz>\n");
     return 2;
   }
   const std::string input = argv[1];

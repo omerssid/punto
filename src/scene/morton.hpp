@@ -12,7 +12,7 @@
 
 #include "core/math.hpp"
 
-namespace pcv {
+namespace punto {
 
 // Bits of grid resolution per axis. Ten gives a 1024^3 grid, so the finest
 // representable cell is 1/1024 of the cloud's longest side -- far beyond
@@ -102,4 +102,4 @@ inline std::uint64_t keyPrefix(std::uint64_t key, int level) {
   return key >> drop;
 }
 
-}  // namespace pcv
+}  // namespace punto

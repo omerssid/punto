@@ -5,19 +5,19 @@
 #include "app/viewer.hpp"
 #include "core/log.hpp"
 
-namespace pcv {
+namespace punto {
 // Defined in the generated embedded_shaders.cpp; referenced here so the
 // linker cannot discard that translation unit's static registrar.
 void ensureEmbeddedShadersLinked();
-}  // namespace pcv
+}  // namespace punto
 
 namespace {
 
 void usage() {
   std::printf(
-      "pcd_viewer -- GPU point cloud viewer\n"
+      "punto-viewer -- GPU point cloud viewer\n"
       "\n"
-      "usage: pcd_viewer [options] [file ...]\n"
+      "usage: punto-viewer [options] [file ...]\n"
       "\n"
       "  --gpu auto|nvidia|intel   which GPU to render on (default: auto,\n"
       "                            which prefers the discrete one)\n"
@@ -66,17 +66,17 @@ bool parseSize(const std::string& text, int& width, int& height) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  pcv::ensureEmbeddedShadersLinked();
+  punto::ensureEmbeddedShadersLinked();
 
-  pcv::ViewerOptions options;
+  punto::ViewerOptions options;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "-h" || arg == "--help") { usage(); return 0; }
-    if (arg == "-v" || arg == "--verbose") { pcv::setLogLevel(pcv::LogLevel::Debug); continue; }
+    if (arg == "-v" || arg == "--verbose") { punto::setLogLevel(punto::LogLevel::Debug); continue; }
     if (arg == "--no-vsync") { options.vsync = false; continue; }
     if (arg == "--keep-invalid") { options.loadOptions.dropInvalid = false; continue; }
     if (arg == "--gpu" && i + 1 < argc) {
-      if (!pcv::parseGpuPreference(argv[++i], options.gpu)) {
+      if (!punto::parseGpuPreference(argv[++i], options.gpu)) {
         std::fprintf(stderr, "unknown --gpu value '%s'\n", argv[i]);
         return 2;
       }
@@ -92,19 +92,19 @@ int main(int argc, char** argv) {
     if (arg == "--screenshot" && i + 1 < argc) { options.screenshotPath = argv[++i]; continue; }
     if (arg == "--nav" && i + 1 < argc) {
       const std::string v = argv[++i];
-      if (v == "orbit") options.nav = pcv::NavMode::Orbit;
-      else if (v == "fly") options.nav = pcv::NavMode::Fly;
-      else if (v == "top") options.nav = pcv::NavMode::TopDown;
+      if (v == "orbit") options.nav = punto::NavMode::Orbit;
+      else if (v == "fly") options.nav = punto::NavMode::Fly;
+      else if (v == "top") options.nav = punto::NavMode::TopDown;
       else { std::fprintf(stderr, "unknown --nav '%s'\n", v.c_str()); return 2; }
       continue;
     }
     if (arg == "--view" && i + 1 < argc) {
       const std::string v = argv[++i];
-      const struct { const char* name; pcv::StandardView view; } kViews[] = {
-          {"top", pcv::StandardView::Top},       {"bottom", pcv::StandardView::Bottom},
-          {"+x", pcv::StandardView::PlusX},      {"-x", pcv::StandardView::MinusX},
-          {"+y", pcv::StandardView::PlusY},      {"-y", pcv::StandardView::MinusY},
-          {"iso", pcv::StandardView::Isometric}};
+      const struct { const char* name; punto::StandardView view; } kViews[] = {
+          {"top", punto::StandardView::Top},       {"bottom", punto::StandardView::Bottom},
+          {"+x", punto::StandardView::PlusX},      {"-x", punto::StandardView::MinusX},
+          {"+y", punto::StandardView::PlusY},      {"-y", punto::StandardView::MinusY},
+          {"iso", punto::StandardView::Isometric}};
       bool found = false;
       for (const auto& candidate : kViews)
         if (v == candidate.name) { options.standardView = candidate.view; found = true; }
@@ -131,10 +131,10 @@ int main(int argc, char** argv) {
     }
     if (arg == "--color" && i + 1 < argc) {
       const std::string v = argv[++i];
-      if (v == "rgb") options.render.colorMode = pcv::ColorMode::Rgb;
-      else if (v == "scalar") options.render.colorMode = pcv::ColorMode::Scalar;
-      else if (v == "flat") options.render.colorMode = pcv::ColorMode::Flat;
-      else if (v == "chunk") options.render.colorMode = pcv::ColorMode::ChunkId;
+      if (v == "rgb") options.render.colorMode = punto::ColorMode::Rgb;
+      else if (v == "scalar") options.render.colorMode = punto::ColorMode::Scalar;
+      else if (v == "flat") options.render.colorMode = punto::ColorMode::Flat;
+      else if (v == "chunk") options.render.colorMode = punto::ColorMode::ChunkId;
       else { std::fprintf(stderr, "unknown --color '%s'\n", v.c_str()); return 2; }
       options.colorModeExplicit = true;
       continue;
@@ -171,7 +171,7 @@ int main(int argc, char** argv) {
       const char* names[] = {"viridis", "turbo", "grayscale", "coolwarm", "plasma", "spectral"};
       bool found = false;
       for (int r = 0; r < 6; ++r)
-        if (v == names[r]) { options.render.ramp = static_cast<pcv::ColorRamp>(r); found = true; }
+        if (v == names[r]) { options.render.ramp = static_cast<punto::ColorRamp>(r); found = true; }
       if (!found) { std::fprintf(stderr, "unknown --ramp '%s'\n", v.c_str()); return 2; }
       continue;
     }
@@ -215,6 +215,6 @@ int main(int argc, char** argv) {
     options.files.push_back(arg);
   }
 
-  pcv::Viewer viewer;
+  punto::Viewer viewer;
   return viewer.run(options);
 }

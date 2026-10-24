@@ -3,7 +3,7 @@
 #include <chrono>
 #include <mutex>
 
-namespace pcv {
+namespace punto {
 namespace {
 
 LogLevel g_level = LogLevel::Info;
@@ -46,4 +46,4 @@ double ScopedTimer::elapsedMs() const { return static_cast<double>(nowNs() - sta
 
 ScopedTimer::~ScopedTimer() { logDebug("{}: {:.1f} ms", label_, elapsedMs()); }
 
-}  // namespace pcv
+}  // namespace punto

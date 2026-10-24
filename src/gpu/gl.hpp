@@ -8,7 +8,7 @@
 
 #include <string>
 
-namespace pcv {
+namespace punto {
 
 // Installs the KHR_debug callback so driver errors arrive as log lines at
 // the point they happen, rather than as a silently wrong frame.
@@ -19,9 +19,9 @@ void installGlDebugCallback();
 void checkGlError(const char* where);
 
 #ifndef NDEBUG
-#define PCV_GL_CHECK(where) ::pcv::checkGlError(where)
+#define PUNTO_GL_CHECK(where) ::punto::checkGlError(where)
 #else
-#define PCV_GL_CHECK(where) ((void)0)
+#define PUNTO_GL_CHECK(where) ((void)0)
 #endif
 
 struct GlDeviceInfo {
@@ -47,4 +47,4 @@ GlDeviceInfo queryGlDevice();
 // through different extensions.
 int queryFreeVramMB();
 
-}  // namespace pcv
+}  // namespace punto
