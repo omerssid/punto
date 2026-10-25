@@ -1,5 +1,7 @@
 #include "io/cloud_builder.hpp"
 
+#include <cctype>
+
 #include <algorithm>
 #include <cmath>
 #include <atomic>
@@ -120,10 +122,25 @@ std::size_t layoutFields(std::vector<SourceField>& fields) {
 }
 
 DecodePlan buildDecodePlan(const std::vector<SourceField>& fields, PointCloud& cloud,
-                           std::vector<std::string>& warnings) {
+                           std::vector<std::string>& warnings, const LoadOptions& options) {
   DecodePlan plan;
   cloud.fields.clear();
   cloud.columns.clear();
+
+  // Dropping is by exact field name, case-insensitively, and only ever
+  // applies to scalar columns: a dropped x or rgb would leave nothing to
+  // draw, so destForName's verdict wins over the drop list.
+  auto dropped = [&options](const std::string& name) {
+    for (const std::string& want : options.dropFields) {
+      if (want.size() != name.size()) continue;
+      bool same = true;
+      for (std::size_t i = 0; i < name.size() && same; ++i)
+        same = std::tolower(static_cast<unsigned char>(name[i])) ==
+               std::tolower(static_cast<unsigned char>(want[i]));
+      if (same) return true;
+    }
+    return false;
+  };
 
   // First pass fixes the column count so `columns` never reallocates while
   // entries hold indices into it.
@@ -136,7 +153,7 @@ DecodePlan buildDecodePlan(const std::vector<SourceField>& fields, PointCloud& c
       // multi-count field is always a plain set of columns.
       const FieldDest dest =
           count == 1 ? destForName(f.name, f.type, normFloat) : FieldDest::Column;
-      if (dest == FieldDest::Column) ++columnCount;
+      if (dest == FieldDest::Column && !dropped(f.name)) ++columnCount;
     }
   }
   cloud.columns.reserve(columnCount);
@@ -153,6 +170,12 @@ DecodePlan buildDecodePlan(const std::vector<SourceField>& fields, PointCloud& c
       bool normFloat = false;
       entry.dest = count == 1 ? destForName(f.name, f.type, normFloat) : FieldDest::Column;
       entry.colorIsNormalizedFloat = normFloat;
+      // A dropped field keeps its plan entry -- ASCII decoding counts
+      // entries to find token positions -- but gets no FieldInfo. Listing a
+      // field the cloud does not actually hold would offer the UI a colour
+      // source with no column behind it.
+      const bool isDropped = entry.dest == FieldDest::Column && dropped(f.name);
+      if (isDropped) entry.dest = FieldDest::Skip;
 
       // A field named x/y/z that appears twice would silently overwrite the
       // first; warn rather than produce a quietly wrong cloud.
@@ -185,12 +208,14 @@ DecodePlan buildDecodePlan(const std::vector<SourceField>& fields, PointCloud& c
           break;
       }
 
-      FieldInfo info;
-      info.name = columnName;
-      info.type = f.type;
-      info.role = inferFieldRole(columnName);
-      info.columnIndex = entry.column;
-      cloud.fields.push_back(std::move(info));
+      if (!isDropped) {
+        FieldInfo info;
+        info.name = columnName;
+        info.type = f.type;
+        info.role = inferFieldRole(columnName);
+        info.columnIndex = entry.column;
+        cloud.fields.push_back(std::move(info));
+      }
 
       plan.entries.push_back(entry);
     }
@@ -220,6 +245,17 @@ void allocateCloud(PointCloud& cloud, const DecodePlan& plan, std::size_t n,
     if (e.dest == FieldDest::Column && e.column >= 0)
       cloud.columns[static_cast<std::size_t>(e.column)].reset(e.type, n);
   }
+}
+
+std::size_t applyPointLimit(DecodePlan& plan, std::size_t pointCount,
+                            const LoadOptions& options) {
+  plan.sourceStep = 1;
+  if (options.maxPoints == 0 || pointCount <= options.maxPoints) return pointCount;
+
+  // Round the step up so the kept count never exceeds the limit, then
+  // recompute the count from the step actually used.
+  plan.sourceStep = (pointCount + options.maxPoints - 1) / options.maxPoints;
+  return (pointCount + plan.sourceStep - 1) / plan.sourceStep;
 }
 
 void setInterleavedStride(DecodePlan& plan, std::size_t recordStride) {
@@ -291,12 +327,14 @@ std::uint64_t decodeRange(const DecodePlan& plan, const std::byte* base, std::si
   std::uint64_t invalid = 0;
 
   for (std::size_t i = first; i < last; ++i) {
+    // Point i of the decoded cloud comes from record i * sourceStep.
+    const std::size_t sourceRecord = i * plan.sourceStep;
     Vec3f pos{0.0f, 0.0f, 0.0f};
     std::uint8_t cr = 255, cg = 255, cb = 255, ca = 255;
     bool sawColor = false;
 
     for (const DecodePlan::Entry& e : plan.entries) {
-      const std::byte* src = base + e.srcOffset + i * e.srcStride;
+      const std::byte* src = base + e.srcOffset + sourceRecord * e.srcStride;
       switch (e.dest) {
         // Subtract the origin in double, then narrow. Narrowing first would
         // have already lost the precision the rebasing exists to preserve.
@@ -353,7 +391,7 @@ std::uint64_t decodeRange(const DecodePlan& plan, const std::byte* base, std::si
     cloud.positions[i] = pos;
     if (sawColor && !cloud.colors.empty()) cloud.colors[i] = packRgba(cr, cg, cb, ca);
     if (keepSourceIndex && !cloud.sourceIndex.empty())
-      cloud.sourceIndex[i] = static_cast<std::uint32_t>(i);
+      cloud.sourceIndex[i] = static_cast<std::uint32_t>(sourceRecord);
     if (!positionFinite(pos)) ++invalid;
   }
 

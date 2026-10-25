@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 #include "app/viewer.hpp"
 #include "core/log.hpp"
@@ -44,6 +45,9 @@ void usage() {
       "  --keep-invalid            keep points with NaN/Inf coordinates\n"
       "  --force                   open even if the pre-flight estimate says\n"
       "                            the file will not fit in available memory\n"
+      "  --max-points N            keep at most N points, evenly spread through\n"
+      "                            the file, to open a cloud that will not fit\n"
+      "  --drop-fields A,B         do not decode these scalar fields at all\n"
       "  --threads N               worker threads for loading\n"
       "  -v, --verbose             debug logging\n"
       "  -h, --help                this message\n"
@@ -56,6 +60,20 @@ void usage() {
       "  W A S D Q E      fly              shift / alt  faster / slower\n"
       "  F  frame all     L  toggle LOD     E  toggle EDL\n"
       "  C  cycle colour  R  reload shaders               Esc  quit\n");
+}
+
+// Splits a comma-separated field list, e.g. "gps_time,user_data".
+std::vector<std::string> splitFieldList(const std::string& text) {
+  std::vector<std::string> out;
+  std::size_t start = 0;
+  while (start <= text.size()) {
+    const std::size_t comma = text.find(',', start);
+    const std::size_t end = comma == std::string::npos ? text.size() : comma;
+    if (end > start) out.push_back(text.substr(start, end - start));
+    if (comma == std::string::npos) break;
+    start = comma + 1;
+  }
+  return out;
 }
 
 bool parseSize(const std::string& text, int& width, int& height) {
@@ -85,6 +103,14 @@ int main(int argc, char** argv) {
     if (arg == "--no-vsync") { options.vsync = false; continue; }
     if (arg == "--keep-invalid") { options.loadOptions.dropInvalid = false; continue; }
     if (arg == "--force") { options.forceLoad = true; continue; }
+    if (arg == "--max-points" && i + 1 < argc) {
+      options.loadOptions.maxPoints = std::strtoull(argv[++i], nullptr, 10);
+      continue;
+    }
+    if (arg == "--drop-fields" && i + 1 < argc) {
+      options.loadOptions.dropFields = splitFieldList(argv[++i]);
+      continue;
+    }
     if (arg == "--gpu" && i + 1 < argc) {
       if (!punto::parseGpuPreference(argv[++i], options.gpu)) {
         std::fprintf(stderr, "unknown --gpu value '%s'\n", argv[i]);

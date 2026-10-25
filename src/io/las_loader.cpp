@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "core/large_buffer.hpp"
 #include "core/log.hpp"
 #include "core/parallel.hpp"
 #include "io/cloud_builder.hpp"
@@ -247,7 +248,7 @@ LoadResult loadLas(const std::string& path, const LoadOptions& options, PointClo
   }
   if (pointCount == 0) return LoadResult::failure("LAS: no complete point records");
 
-  DecodePlan plan = buildDecodePlan(layout.fields, out, result.warnings);
+  DecodePlan plan = buildDecodePlan(layout.fields, out, result.warnings, options);
   if (!plan.hasAllPositions()) return LoadResult::failure("LAS: internal layout error");
   setInterleavedStride(plan, stride);
 
@@ -265,7 +266,7 @@ LoadResult loadLas(const std::string& path, const LoadOptions& options, PointClo
 
   // Decompressed LAZ records live here; for LAS the mapping is read in
   // place and this stays empty.
-  std::vector<std::byte> decompressed;
+  LargeBuffer<std::byte> decompressed;
   const std::byte* base = nullptr;
 
   Stopwatch decodeTimer;
@@ -282,7 +283,7 @@ LoadResult loadLas(const std::string& path, const LoadOptions& options, PointClo
       }
       return LoadResult::failure(std::move(lazError));
     }
-    base = decompressed.data();
+    base = decompressed.get();
   } else {
     base = reinterpret_cast<const std::byte*>(file.chars() + header.pointDataOffset);
     file.adviseSequential(header.pointDataOffset, pointCount * stride);
@@ -314,11 +315,12 @@ LoadResult loadLas(const std::string& path, const LoadOptions& options, PointClo
   out.width = static_cast<std::uint32_t>(pointCount);
   out.height = 1;
 
-  allocateCloud(out, plan, pointCount, options);
   out.origin = chooseOrigin(plan, base, pointCount);
+  const std::size_t keptCount = applyPointLimit(plan, pointCount, options);
+  allocateCloud(out, plan, keptCount, options);
 
   std::uint64_t invalid = 0;
-  if (!decodeParallel(plan, base, pointCount, out.origin, options, stop, out, invalid)) {
+  if (!decodeParallel(plan, base, keptCount, out.origin, options, stop, out, invalid)) {
     out.clear();
     result.cancelled = true;
     result.error = "load cancelled";

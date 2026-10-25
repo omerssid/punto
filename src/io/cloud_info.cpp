@@ -20,7 +20,18 @@ constexpr std::uint64_t kGpuScalarBytes = 2;  // the active field, quantized to 
 MemoryEstimate estimateMemory(const std::vector<SourceField>& fields, std::uint64_t pointCount,
                               std::uint64_t decodeBufferBytes, const LoadOptions& options) {
   MemoryEstimate est;
-  est.pointCount = pointCount;
+
+  // A point limit thins the decoded cloud, so everything sized per decoded
+  // point shrinks with it. The decode buffer does not: the records are all
+  // decompressed or parsed before the stride is applied over them, so it
+  // stays full size whatever the limit.
+  std::uint64_t kept = pointCount;
+  if (options.maxPoints > 0 && pointCount > options.maxPoints) {
+    const std::uint64_t step = (pointCount + options.maxPoints - 1) / options.maxPoints;
+    kept = (pointCount + step - 1) / step;
+  }
+
+  est.pointCount = kept;
   est.decodeBuffer = decodeBufferBytes;
 
   // Plan against a throwaway cloud. buildDecodePlan fills in column metadata
@@ -28,7 +39,7 @@ MemoryEstimate estimateMemory(const std::vector<SourceField>& fields, std::uint6
   // to the point -- cannot disagree with what the loader will actually do.
   PointCloud scratch;
   std::vector<std::string> ignored;
-  const DecodePlan plan = buildDecodePlan(fields, scratch, ignored);
+  const DecodePlan plan = buildDecodePlan(fields, scratch, ignored, options);
 
   std::uint64_t perPoint = sizeof(Vec3f);
   if (plan.producesColor) perPoint += sizeof(std::uint32_t);
@@ -41,18 +52,22 @@ MemoryEstimate estimateMemory(const std::vector<SourceField>& fields, std::uint6
     if (e.dest == FieldDest::Column && e.column >= 0) perPoint += fieldTypeSize(e.type);
 
   est.bytesPerPoint = static_cast<std::uint32_t>(perPoint);
-  est.pointCloud = perPoint * pointCount;
+  est.pointCloud = perPoint * kept;
 
-  // Chunk building, as buildChunks allocates it: Morton keys and the radix
-  // sort's scratch (8 bytes each), the permutation (4), and then one gather
-  // temporary at a time -- the largest being positions. `keys` is released
-  // before the gather starts, so the two peaks are distinct.
-  const std::uint64_t sortPeak = (8 + 8 + 4) * pointCount;
-  const std::uint64_t gatherPeak = (8 + 4) * pointCount + sizeof(Vec3f) * pointCount;
-  est.chunkScratch = std::max(sortPeak, gatherPeak);
+  // Chunk building, as buildChunks actually allocates it. The three stages
+  // overlap only in pairs, because each buffer is released as soon as it is
+  // finished with:
+  //   sort    Morton keys + radix scratch, 8 bytes each
+  //   order   keys + the permutation, after the scratch is released
+  //   gather  permutation + one temporary at a time, the largest of which
+  //           is positions, after the keys are released
+  const std::uint64_t sortPeak = (8 + 8) * kept;
+  const std::uint64_t orderPeak = (8 + 4) * kept;
+  const std::uint64_t gatherPeak = (4 + sizeof(Vec3f)) * kept;
+  est.chunkScratch = std::max({sortPeak, orderPeak, gatherPeak});
 
   est.gpuVertex = (kGpuPositionBytes + (plan.producesColor ? kGpuColorBytes : 0) +
-                   kGpuScalarBytes) * pointCount;
+                   kGpuScalarBytes) * kept;
   return est;
 }
 

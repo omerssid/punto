@@ -29,6 +29,19 @@ struct LoadOptions {
   // 0 selects defaultWorkerCount().
   unsigned workers = 0;
 
+  // Keep at most this many points, taking every Nth record from the file.
+  // 0 keeps all of them.
+  //
+  // Subsampling at decode time rather than afterwards is the point: a cloud
+  // thinned once it is already in memory has still cost its full peak, which
+  // is exactly the peak that could not be afforded.
+  std::uint64_t maxPoints = 0;
+
+  // Scalar fields to leave out entirely, by name. They are neither decoded
+  // nor given a column. GPS time alone is 8 bytes a point -- 700 MB on an
+  // 87M-point file -- and a viewer never reads it.
+  std::vector<std::string> dropFields;
+
   // For KITTI-style raw .bin, which carries no header to describe itself.
   // Ignored by every self-describing format.
   int rawBinFieldCount = 4;  // x y z intensity

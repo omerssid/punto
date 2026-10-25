@@ -324,7 +324,7 @@ LoadResult loadPcd(const std::string& path, const LoadOptions& options, PointClo
   const std::size_t recordStride = layoutFields(header.fields);
   if (recordStride == 0) return LoadResult::failure("PCD: computed record stride is zero");
 
-  DecodePlan plan = buildDecodePlan(header.fields, out, result.warnings);
+  DecodePlan plan = buildDecodePlan(header.fields, out, result.warnings, options);
   if (!plan.hasAllPositions())
     return LoadResult::failure("PCD: file declares no x/y/z fields");
 
@@ -411,11 +411,12 @@ LoadResult loadPcd(const std::string& path, const LoadOptions& options, PointClo
 
   if (actualPoints == 0) return LoadResult::failure("PCD: no points decoded");
 
-  allocateCloud(out, plan, actualPoints, options);
   out.origin = chooseOrigin(plan, base, actualPoints);
+  const std::size_t keptCount = applyPointLimit(plan, actualPoints, options);
+  allocateCloud(out, plan, keptCount, options);
 
   std::uint64_t invalid = 0;
-  if (!decodeParallel(plan, base, actualPoints, out.origin, options, stop, out, invalid)) {
+  if (!decodeParallel(plan, base, keptCount, out.origin, options, stop, out, invalid)) {
     out.clear();
     result.cancelled = true;
     result.error = "load cancelled";

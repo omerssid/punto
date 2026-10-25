@@ -654,6 +654,117 @@ void testEstimateDoesNotReadPoints() {
 // available before anything is allocated. A file claiming ten billion points
 // must estimate in the hundreds of GB even though its body is 180 KB, or the
 // guard would wave through exactly the files it exists to stop.
+// Subsampling must take every Nth record rather than the first N: a cloud
+// truncated to its first quarter covers a quarter of the ground, which is a
+// different cloud, not a cheaper one.
+void testMaxPointsSubsamplesEvenly() {
+  beginTest("max-points keeps every Nth point, not the first N");
+  if (!fixtureExists("helix_binary.pcd")) return;
+
+  const PointCloud full = load("helix_binary.pcd");
+  CHECK(full.size() > 100);
+  if (full.size() <= 100) return;
+
+  LoadOptions limited;
+  limited.maxPoints = full.size() / 4;
+  const PointCloud thin = load("helix_binary.pcd", limited);
+
+  CHECK(thin.size() <= limited.maxPoints);
+  CHECK(thin.size() > 0);
+
+  // Source rows must be the file's rows, spaced by the step -- otherwise the
+  // inspector would report a row that is not where the point came from.
+  CHECK(thin.hasSourceIndex());
+  if (thin.hasSourceIndex() && thin.size() >= 2) {
+    const std::uint32_t step = thin.sourceIndex[1] - thin.sourceIndex[0];
+    CHECK(step >= 2);
+    CHECK(thin.sourceIndex[0] == 0);
+    bool evenlySpaced = true;
+    for (std::size_t i = 1; i < thin.size(); ++i)
+      if (thin.sourceIndex[i] - thin.sourceIndex[i - 1] != step) evenlySpaced = false;
+    CHECK(evenlySpaced);
+    // The last kept point must come from near the end of the file, which is
+    // what distinguishes sampling from truncation.
+    CHECK(thin.sourceIndex[thin.size() - 1] > full.size() * 3 / 4);
+  }
+
+  // The thinned cloud must still span the original, not a corner of it.
+  const Vec3f fullSize = full.boundsLocal.size();
+  const Vec3f thinSize = thin.boundsLocal.size();
+  CHECK_NEAR(thinSize.x, fullSize.x, fullSize.x * 0.05f + 1e-3f);
+  CHECK_NEAR(thinSize.y, fullSize.y, fullSize.y * 0.05f + 1e-3f);
+  CHECK_NEAR(thinSize.z, fullSize.z, fullSize.z * 0.05f + 1e-3f);
+
+  // A limit above the cloud's size must change nothing at all.
+  LoadOptions generous;
+  generous.maxPoints = full.size() * 10;
+  const PointCloud whole = load("helix_binary.pcd", generous);
+  CHECK(whole.size() == full.size());
+}
+
+// Dropping a field must remove its column entirely rather than keep an empty
+// one, and must never remove geometry or colour however it is named.
+void testDropFields() {
+  beginTest("drop-fields removes columns but never geometry");
+  if (!fixtureExists("helix_14_fmt7.las")) return;
+
+  const PointCloud full = load("helix_14_fmt7.las");
+  const std::size_t fullColumns = full.columns.size();
+  CHECK(fullColumns > 0);
+  CHECK(full.findField("gps_time") != nullptr);
+
+  LoadOptions dropped;
+  dropped.dropFields = {"gps_time", "user_data"};
+  const PointCloud thin = load("helix_14_fmt7.las", dropped);
+
+  CHECK(thin.size() == full.size());
+  CHECK(thin.columns.size() == fullColumns - 2);
+  CHECK(thin.findField("gps_time") == nullptr);
+  CHECK(thin.findField("user_data") == nullptr);
+  CHECK(thin.findField("intensity") != nullptr);
+  // Geometry and colour survive untouched.
+  CHECK(thin.hasColors() == full.hasColors());
+  for (std::size_t i = 0; i < thin.size() && i < 64; ++i) {
+    CHECK_NEAR(thin.positions[i].x, full.positions[i].x, 1e-6);
+    CHECK_NEAR(thin.positions[i].z, full.positions[i].z, 1e-6);
+  }
+  CHECK(thin.memoryBytes() < full.memoryBytes());
+
+  // Naming a position or colour field must be ignored, not obeyed.
+  LoadOptions suicidal;
+  suicidal.dropFields = {"x", "y", "z", "red", "green", "blue"};
+  const PointCloud intact = load("helix_14_fmt7.las", suicidal);
+  CHECK(intact.size() == full.size());
+  CHECK(intact.hasColors() == full.hasColors());
+  if (intact.size() == full.size())
+    for (std::size_t i = 0; i < intact.size() && i < 64; ++i)
+      CHECK_NEAR(intact.positions[i].y, full.positions[i].y, 1e-6);
+}
+
+// Both cuts must show up in the estimate, or the guard would refuse a file
+// that the options given would have made openable.
+void testEstimateHonoursCuts() {
+  beginTest("estimate reflects max-points and drop-fields");
+  if (!fixtureExists("helix_14_fmt7.las")) return;
+  const std::string path = (fixtureDir() / "helix_14_fmt7.las").string();
+
+  const CloudInfo base = probeCloud(path, LoadOptions{});
+
+  LoadOptions dropped;
+  dropped.dropFields = {"gps_time"};
+  const CloudInfo lean = probeCloud(path, dropped);
+  CHECK(lean.memory.bytesPerPoint == base.memory.bytesPerPoint - 8);
+
+  LoadOptions limited;
+  limited.maxPoints = 100;
+  const CloudInfo small = probeCloud(path, limited);
+  CHECK(small.memory.pointCount <= 100);
+  CHECK(small.memory.pointCloud < base.memory.pointCloud);
+  CHECK(small.memory.gpuVertex < base.memory.gpuVertex);
+  // The declared count is still reported: it describes the file, not the load.
+  CHECK(small.pointCount == base.pointCount);
+}
+
 void testEstimateTrustsDeclaredCount() {
   beginTest("estimate trusts the declared point count");
   if (!fixtureExists("helix_14_fmt7.las")) return;
@@ -746,6 +857,9 @@ int main() {
   testMissingFileIsAnError();
   testMemoryEstimateMatchesRealLoad();
   testEstimateDoesNotReadPoints();
+  testMaxPointsSubsamplesEvenly();
+  testDropFields();
+  testEstimateHonoursCuts();
   testEstimateTrustsDeclaredCount();
   testHostMemoryReadings();
   testOomScoreAdjustment();

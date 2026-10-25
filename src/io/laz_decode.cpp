@@ -212,13 +212,15 @@ bool lazSupported() { return true; }
 
 bool decodeLazPoints(const std::string& path, const std::vector<SourceField>& fields,
                      std::size_t stride, std::uint8_t pointFormat, std::size_t pointCount,
-                     unsigned workers, std::stop_token stop, std::vector<std::byte>& records,
+                     unsigned workers, std::stop_token stop, LargeBuffer<std::byte>& records,
                      std::vector<std::string>& warnings, std::string& error) {
   if (workers == 0) workers = defaultWorkerCount();
   const RecordOffsets offsets = resolveOffsets(fields);
   const bool legacy = pointFormat <= 5;
 
-  records.assign(stride * pointCount, std::byte{0});
+  // No value-initialisation: the decode writes every byte, and zeroing
+  // first would cost a second full pass over several gigabytes.
+  records.allocate(stride * pointCount);
 
   // Each worker opens its own reader and seeks to the start of its range.
   //
@@ -258,7 +260,7 @@ bool decodeLazPoints(const std::string& path, const std::vector<SourceField>& fi
             if (failed.load(std::memory_order_relaxed)) return;
           }
           if (!reader.read(localError)) { fail(); return; }
-          writeRecord(reader.point(), offsets, legacy, records.data() + i * stride);
+          writeRecord(reader.point(), offsets, legacy, records.get() + i * stride);
         }
       });
 

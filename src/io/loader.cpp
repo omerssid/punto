@@ -116,7 +116,7 @@ LoadResult loadKittiBin(const std::string& path, const LoadOptions& options, Poi
   const std::size_t recordStride = layoutFields(fields);
   const std::size_t pointCount = file.size() / recordStride;
 
-  DecodePlan plan = buildDecodePlan(fields, out, result.warnings);
+  DecodePlan plan = buildDecodePlan(fields, out, result.warnings, options);
   setInterleavedStride(plan, recordStride);
 
   out.sourcePath = path;
@@ -129,11 +129,14 @@ LoadResult loadKittiBin(const std::string& path, const LoadOptions& options, Poi
   const auto* base = reinterpret_cast<const std::byte*>(file.chars());
 
   Stopwatch decodeTimer;
-  allocateCloud(out, plan, pointCount, options);
+  // chooseOrigin samples the whole file, so it keeps the source count;
+  // everything after it works in decoded points.
   out.origin = chooseOrigin(plan, base, pointCount);
+  const std::size_t keptCount = applyPointLimit(plan, pointCount, options);
+  allocateCloud(out, plan, keptCount, options);
 
   std::uint64_t invalid = 0;
-  if (!decodeParallel(plan, base, pointCount, out.origin, options, std::move(stop), out, invalid)) {
+  if (!decodeParallel(plan, base, keptCount, out.origin, options, std::move(stop), out, invalid)) {
     out.clear();
     result.cancelled = true;
     result.error = "load cancelled";

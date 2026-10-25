@@ -314,7 +314,7 @@ LoadResult loadPly(const std::string& path, const LoadOptions& options, PointClo
   if (fields.empty()) return LoadResult::failure("PLY: vertex element has no scalar properties");
 
   const std::size_t recordStride = layoutFields(fields);
-  DecodePlan plan = buildDecodePlan(fields, out, result.warnings);
+  DecodePlan plan = buildDecodePlan(fields, out, result.warnings, options);
   if (!plan.hasAllPositions())
     return LoadResult::failure("PLY: vertex element declares no x/y/z properties");
 
@@ -365,11 +365,12 @@ LoadResult loadPly(const std::string& path, const LoadOptions& options, PointClo
     base = reinterpret_cast<const std::byte*>(file.chars() + offset);
   }
 
-  allocateCloud(out, plan, pointCount, options);
   out.origin = chooseOrigin(plan, base, pointCount);
+  const std::size_t keptCount = applyPointLimit(plan, pointCount, options);
+  allocateCloud(out, plan, keptCount, options);
 
   std::uint64_t invalid = 0;
-  if (!decodeParallel(plan, base, pointCount, out.origin, options, stop, out, invalid)) {
+  if (!decodeParallel(plan, base, keptCount, out.origin, options, stop, out, invalid)) {
     out.clear();
     result.cancelled = true;
     result.error = "load cancelled";

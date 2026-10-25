@@ -294,6 +294,20 @@ void printEstimate(const CloudInfo& info) {
     std::printf("  \x1b[33mwarning\x1b[0m       %s\n", w.c_str());
 }
 
+// Splits a comma-separated field list, e.g. "gps_time,user_data".
+std::vector<std::string> splitFieldList(const std::string& text) {
+  std::vector<std::string> out;
+  std::size_t start = 0;
+  while (start <= text.size()) {
+    const std::size_t comma = text.find(',', start);
+    const std::size_t end = comma == std::string::npos ? text.size() : comma;
+    if (end > start) out.push_back(text.substr(start, end - start));
+    if (comma == std::string::npos) break;
+    start = comma + 1;
+  }
+  return out;
+}
+
 void usage() {
   std::printf(
       "usage: punto-probe [options] <file> [<file> ...]\n"
@@ -304,6 +318,8 @@ void usage() {
       "  --bin-fields N     float32 fields per point for raw .bin (default 4)\n"
       "  --estimate         read only the header: report size and memory cost,\n"
       "                     then exit without loading any points\n"
+      "  --max-points N     keep at most N points, evenly spread through the file\n"
+      "  --drop-fields A,B  do not decode these scalar fields at all\n"
       "  --chunks           build the chunk/LOD tree and report it\n"
       "  --chunk-size N     max points per chunk (default 131072)\n"
       "  -v                 verbose timing\n");
@@ -324,6 +340,10 @@ int main(int argc, char** argv) {
     else if (arg == "--no-source-index") options.keepSourceIndex = false;
     else if (arg == "--threads" && i + 1 < argc) options.workers = static_cast<unsigned>(std::atoi(argv[++i]));
     else if (arg == "--bin-fields" && i + 1 < argc) options.rawBinFieldCount = std::atoi(argv[++i]);
+    else if (arg == "--max-points" && i + 1 < argc)
+      options.maxPoints = std::strtoull(argv[++i], nullptr, 10);
+    else if (arg == "--drop-fields" && i + 1 < argc)
+      options.dropFields = splitFieldList(argv[++i]);
     else if (arg == "--estimate") estimateOnly = true;
     else if (arg == "--chunks") doChunks = true;
     else if (arg == "--chunk-size" && i + 1 < argc) {

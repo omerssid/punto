@@ -72,6 +72,11 @@ struct DecodePlan {
 
   std::vector<Entry> entries;
   std::size_t recordStride = 0;
+
+  // Decoded point i reads source record i * sourceStep. 1 reads every
+  // record; 4 keeps a quarter of the cloud, evenly spread through the file
+  // rather than truncated to its first quarter.
+  std::size_t sourceStep = 1;
   std::size_t tokensPerRecord = 0;  // ASCII
   bool hasPos[3] = {false, false, false};
   bool producesColor = false;
@@ -96,12 +101,22 @@ void setFieldBlockStrides(DecodePlan& plan, const std::vector<SourceField>& fiel
 
 // Builds the decode plan and populates cloud.fields / cloud.columns metadata.
 // Does not allocate per-point storage; call allocateCloud for that.
+//
+// Fields named in options.dropFields are planned as Skip: no column, no
+// decode, no memory. Position and colour fields are never dropped, since
+// without them there is no cloud to show.
 DecodePlan buildDecodePlan(const std::vector<SourceField>& fields, PointCloud& cloud,
-                           std::vector<std::string>& warnings);
+                           std::vector<std::string>& warnings, const LoadOptions& options = {});
 
 // Sizes every per-point array in `cloud` for `n` points.
 void allocateCloud(PointCloud& cloud, const DecodePlan& plan, std::size_t n,
                    const LoadOptions& options);
+
+// How many source records to skip between kept points, and how many points
+// that leaves, given what the file holds and what the caller will accept.
+// Sets plan.sourceStep and returns the number of points to allocate for.
+std::size_t applyPointLimit(DecodePlan& plan, std::size_t pointCount,
+                            const LoadOptions& options);
 
 // Chooses a double-precision origin to rebase positions onto, by sampling
 // records across the file. Positions are stored relative to this so float32
