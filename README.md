@@ -7,25 +7,35 @@ where this is going.
 
 ![The viewer with an 87M-point terrestrial laser scan open](docs/screenshot.png)
 
+## Contents
+
+- [Why](#why) — how this differs from `pcl_viewer`
+- [Performance](#performance) — measured numbers on an 87 M-point scan
+- [Building](#building) — dependencies and the cmake invocation
+- [Using it](#using-it) · [Controls](#controls)
+- [Formats](#formats) — PCD, PLY, LAS, LAZ, raw `.bin`
+- [Inspecting a cloud](#inspecting-a-cloud) — the statistics panel and `punto-probe`
+- [Large files](#large-files) — estimating cost before opening, and opening what will not fit
+- [How it works](#how-it-works) — the load, chunk and draw pipeline
+- [Hybrid graphics](#hybrid-graphics) — which GPU gets used, and when not to force it
+- [Tests](#tests) · [Releases](#releases) · [Status](#status) · [Licence](#licence) · [Attribution](#attribution)
+
 ## Why
 
-`pcl_viewer` is a thin shell over VTK, and that explains most of what is
-frustrating about it. One VTK actor holds the whole cloud, so every frame
-redraws every point — there is no spatial subdivision, no culling and no
-level of detail. Vertices go to the GPU as unquantised float32. Parsing runs
-on one core through PCL's templated point-type machinery.
+I've been using `pcl_viewer` for years, but frequent crashes and limited features pushed me to start this project. `pcl_viewer` is a general-purpose VTK frontend designed to support all of PCL's data types, rather than being specifically optimized for large point clouds. The entire cloud is rendered as a single VTK actor, forcing every frame to redraw every point. There's no spatial subdivision, culling, or level of detail (LOD). Point coordinates are sent to the GPU as float32, and parsing is single-threaded.
 
-This is built the other way round:
+punto is built the other way round:
 
-|                     | `pcl_viewer`                     | this                                        |
-| ------------------- | -------------------------------- | ------------------------------------------- |
-| Per-frame CPU work  | grows with cloud size            | constant — 3 GL calls                       |
-| Culling             | none                             | per-chunk, on the GPU                       |
-| Level of detail     | none                             | continuous, zero extra memory               |
-| GPU vertex size     | 16–32 B/point                    | 8 B/point                                   |
-| Loading             | single-threaded                  | all cores, straight out of an `mmap`        |
-| Fields              | fixed point structs              | whatever the file declares, natively typed  |
-| Inspection          | —                                | per-field statistics, histograms, picking   |
+|                       | `pcl_viewer`          | punto                                      |
+| --------------------- | --------------------- | ------------------------------------------ |
+| Per-frame CPU work    | grows with cloud size | constant — one dispatch, one indirect draw  |
+| Culling               | none                  | per-chunk, on the GPU                       |
+| Level of detail       | none                  | continuous, zero extra memory               |
+| GPU vertex size       | 16–32 B/point         | 8 B positions + 4 colour + 2 scalar         |
+| Loading               | single-threaded       | all cores, straight out of an `mmap`        |
+| Fields                | fixed point structs   | whatever the file declares, natively typed  |
+| Inspection            | —                     | per-field statistics, histograms, picking   |
+| Cost known before load| —                     | peak RAM and VRAM predicted from the header |
 
 ## Performance
 

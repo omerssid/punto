@@ -19,7 +19,7 @@ bool lazSupported() { return false; }
 
 bool decodeLazPoints(const std::string&, const std::vector<SourceField>&, std::size_t,
                      std::uint8_t, std::size_t, unsigned, std::stop_token,
-                     std::vector<std::byte>&, std::vector<std::string>&, std::string& error) {
+                     LargeBuffer<std::byte>&, std::vector<std::string>&, std::string& error) {
   error =
       "LAZ files are compressed and this build has no laszip. Install liblaszip-dev "
       "and re-run cmake.";
