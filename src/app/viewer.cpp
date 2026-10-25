@@ -1,5 +1,7 @@
 #include "app/viewer.hpp"
 
+#include <format>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -10,6 +12,8 @@
 #include "stb_image_write.h"
 
 #include "core/log.hpp"
+#include "core/memory.hpp"
+#include "io/cloud_info.hpp"
 #include "gpu/gl.hpp"
 #include "gpu/overlay_renderer.hpp"
 #include "gpu/shader.hpp"
@@ -125,18 +129,47 @@ void Viewer::destroyWindow() {
 }
 
 bool Viewer::openFile(const std::string& path) {
+  // Pre-flight: read the header and predict the cost before allocating
+  // anything. An 87M-point LAZ needs about 6 GB, and asking for that on a
+  // machine that does not have it does not fail cleanly -- the desktop goes
+  // to swap, the OOM killer picks whichever process it likes, and the first
+  // thing the user sees is a frozen screen. Refusing up front is far kinder.
+  const CloudInfo info = probeCloud(path, options_.loadOptions);
+  if (info.ok) {
+    const std::uint64_t needed = info.memory.peakHostPadded();
+    const std::uint64_t available = availableMemoryBytes();
+    logInfo("{}: {} points, needs about {:.1f} GB", path, info.pointCount,
+            static_cast<double>(needed) / 1e9);
+
+    // available == 0 means the figure could not be read, which is not the
+    // same as there being none; in that case there is nothing to check.
+    if (available > 0 && needed > available && !options_.forceLoad) {
+      const std::string message = std::format(
+          "{} needs about {:.1f} GB but only {:.1f} GB is available. "
+          "Close something large, or pass --force to try anyway.",
+          path, static_cast<double>(needed) / 1e9, static_cast<double>(available) / 1e9);
+      logError("{}", message);
+      ui_.setNotice(message, true);
+      return false;
+    }
+  } else {
+    // A probe failure is not itself fatal -- the loader reports errors far
+    // better than the header parser can -- so fall through and let it try.
+    logDebug("{}: could not pre-flight ({})", path, info.error);
+  }
+
   OpenCloud opened;
   opened.path = path;
   opened.cloud = std::make_shared<PointCloud>();
 
-  ViewerOptions defaults;
-  opened.loadResult = loadPointCloud(path, defaults.loadOptions, *opened.cloud);
+  opened.loadResult = loadPointCloud(path, options_.loadOptions, *opened.cloud);
   if (!opened.loadResult.ok) {
     logError("{}: {}", path, opened.loadResult.error);
+    ui_.setNotice(path + ": " + opened.loadResult.error, true);
     return false;
   }
 
-  opened.chunks = buildChunks(*opened.cloud, defaults.chunkOptions, &opened.chunkStats);
+  opened.chunks = buildChunks(*opened.cloud, options_.chunkOptions, &opened.chunkStats);
   opened.source = std::make_shared<RamChunkSource>(opened.cloud, opened.chunks);
 
   std::string error;
@@ -590,6 +623,7 @@ void Viewer::runResizeStress(int frames) {
 }
 
 int Viewer::run(const ViewerOptions& options) {
+  options_ = options;
   const PrimeTopology topology = detectPrimeTopology();
   applyGpuPreference(options.gpu, topology);
   if (!createWindow(options, topology)) return 1;

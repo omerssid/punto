@@ -52,6 +52,11 @@ struct ViewerOptions {
   // Multiplier on the framed distance: 4 means four times closer.
   float zoom = 1.0f;
 
+  // Open a file even when the pre-flight estimate says it will not fit in
+  // available memory. The estimate is deliberately conservative, and the
+  // person at the keyboard may know they are about to close something large.
+  bool forceLoad = false;
+
   RenderSettings render;
   bool colorModeExplicit = false;
   std::string fieldName;  // scalar field to colour by, by name
@@ -118,6 +123,11 @@ class Viewer {
   GLFWwindow* window_ = nullptr;
   int width_ = 0;
   int height_ = 0;
+
+  // The options run() was given. openFile needs them: it used to build a
+  // fresh ViewerOptions instead, which silently discarded --threads,
+  // --keep-invalid and --chunk-size for every file opened.
+  ViewerOptions options_;
 
   PointRenderer renderer_;
   OverlayRenderer overlay_;

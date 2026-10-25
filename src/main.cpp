@@ -4,6 +4,7 @@
 
 #include "app/viewer.hpp"
 #include "core/log.hpp"
+#include "core/memory.hpp"
 
 namespace punto {
 // Defined in the generated embedded_shaders.cpp; referenced here so the
@@ -41,6 +42,8 @@ void usage() {
       "  --crop F                  crop to fraction F of the cloud's bounds\n"
       "  --chunk-size N            max points per chunk (default 131072)\n"
       "  --keep-invalid            keep points with NaN/Inf coordinates\n"
+      "  --force                   open even if the pre-flight estimate says\n"
+      "                            the file will not fit in available memory\n"
       "  --threads N               worker threads for loading\n"
       "  -v, --verbose             debug logging\n"
       "  -h, --help                this message\n"
@@ -66,6 +69,12 @@ bool parseSize(const std::string& text, int& width, int& height) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  // Make this process the OOM killer's first choice. A viewer that asked for
+  // too much is far more expendable than the session around it; left at the
+  // default it scores below a browser, so an oversized open gets the browser
+  // killed and leaves the viewer thrashing.
+  punto::preferSelfForOomKill();
+
   punto::ensureEmbeddedShadersLinked();
 
   punto::ViewerOptions options;
@@ -75,6 +84,7 @@ int main(int argc, char** argv) {
     if (arg == "-v" || arg == "--verbose") { punto::setLogLevel(punto::LogLevel::Debug); continue; }
     if (arg == "--no-vsync") { options.vsync = false; continue; }
     if (arg == "--keep-invalid") { options.loadOptions.dropInvalid = false; continue; }
+    if (arg == "--force") { options.forceLoad = true; continue; }
     if (arg == "--gpu" && i + 1 < argc) {
       if (!punto::parseGpuPreference(argv[++i], options.gpu)) {
         std::fprintf(stderr, "unknown --gpu value '%s'\n", argv[i]);

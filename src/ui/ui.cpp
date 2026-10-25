@@ -404,6 +404,43 @@ void Ui::drawViewportAnnotations(const Camera& camera, const Vec3& origin, int w
 
 // ------------------------------------------------------------------ draw
 
+void Ui::setNotice(std::string text, bool isError) {
+  notice_ = std::move(text);
+  noticeIsError_ = isError;
+}
+
+// A banner centred near the top of the viewport. Modal would be worse: the
+// message is informational, and a refused open leaves the previous cloud
+// perfectly usable.
+void Ui::drawNotice() {
+  if (notice_.empty()) return;
+
+  const ImGuiViewport* viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                 viewport->WorkPos.y + 48.0f),
+                          ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+  ImGui::SetNextWindowSizeConstraints(ImVec2(320.0f, 0.0f), ImVec2(720.0f, FLT_MAX));
+
+  const ImVec4 accent = noticeIsError_ ? ImVec4(0.55f, 0.13f, 0.13f, 0.96f)
+                                       : ImVec4(0.16f, 0.32f, 0.48f, 0.96f);
+  ImGui::PushStyleColor(ImGuiCol_WindowBg, accent);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f, 12.0f));
+
+  const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar |
+                                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                 ImGuiWindowFlags_NoSavedSettings |
+                                 ImGuiWindowFlags_AlwaysAutoResize |
+                                 ImGuiWindowFlags_NoFocusOnAppearing;
+  if (ImGui::Begin("##notice", nullptr, flags)) {
+    ImGui::TextWrapped("%s", notice_.c_str());
+    ImGui::Spacing();
+    if (ImGui::Button("Dismiss")) notice_.clear();
+  }
+  ImGui::End();
+  ImGui::PopStyleVar();
+  ImGui::PopStyleColor();
+}
+
 UiActions Ui::draw(const UiInput& input, RenderSettings& settings, Camera& camera) {
   UiActions actions;
   if (!initialized_) return actions;
@@ -491,6 +528,7 @@ UiActions Ui::draw(const UiInput& input, RenderSettings& settings, Camera& camer
     if (showHelp_) drawHelpWindow();
   }
   drawStatusBar(input, camera);
+  drawNotice();
 
   return actions;
 }

@@ -8,11 +8,13 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
 
 #include "io/cloud_builder.hpp"
+#include "core/memory.hpp"
 #include "io/cloud_info.hpp"
 #include "io/loader.hpp"
 #include "io/laz_decode.hpp"
@@ -645,6 +647,78 @@ void testEstimateDoesNotReadPoints() {
   std::filesystem::remove(cut, ec);
 }
 
+// The pre-flight guard is only as good as the numbers it compares, and both
+// come from /proc. A silently-zero MemAvailable would disable the guard
+// everywhere without any visible symptom.
+// The guard has to trust what the header declares: that is the only number
+// available before anything is allocated. A file claiming ten billion points
+// must estimate in the hundreds of GB even though its body is 180 KB, or the
+// guard would wave through exactly the files it exists to stop.
+void testEstimateTrustsDeclaredCount() {
+  beginTest("estimate trusts the declared point count");
+  if (!fixtureExists("helix_14_fmt7.las")) return;
+
+  const std::filesystem::path src = fixtureDir() / "helix_14_fmt7.las";
+  const std::filesystem::path liar =
+      std::filesystem::temp_directory_path() / "punto_overstated.las";
+
+  std::vector<char> bytes;
+  {
+    std::ifstream in(src, std::ios::binary);
+    bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  CHECK(bytes.size() > 255);
+  if (bytes.size() <= 255) return;
+
+  const std::uint64_t claimed = 10'000'000'000ull;
+  const std::uint32_t legacy = 0xFFFFFFFFu;
+  std::memcpy(bytes.data() + 107, &legacy, sizeof(legacy));   // legacy count
+  std::memcpy(bytes.data() + 247, &claimed, sizeof(claimed));  // LAS 1.4 count
+  {
+    std::ofstream out(liar, std::ios::binary);
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  }
+
+  const CloudInfo info = probeCloud(liar.string(), LoadOptions{});
+  CHECK(info.ok);
+  CHECK(info.pointCount == claimed);
+  // 38 B/point at ten billion points is comfortably past any real machine.
+  CHECK(info.memory.peakHost() > 100ull * 1000 * 1000 * 1000);
+  CHECK(info.memory.peakHostPadded() > info.memory.peakHost());
+  CHECK(info.memory.peakHostPadded() > availableMemoryBytes());
+
+  std::error_code ec;
+  std::filesystem::remove(liar, ec);
+}
+
+void testHostMemoryReadings() {
+  beginTest("host memory readings are sane");
+
+  const std::uint64_t total = totalMemoryBytes();
+  const std::uint64_t available = availableMemoryBytes();
+
+  CHECK(total > 0);
+  CHECK(available > 0);
+  CHECK(available <= total);
+  // Any machine that can build this has more than 256 MB.
+  CHECK(total > 256ull * 1024 * 1024);
+}
+
+// Raising oom_score_adj is what keeps an oversized open from taking the
+// desktop down with it, so confirm the write actually lands rather than
+// failing silently.
+void testOomScoreAdjustment() {
+  beginTest("process volunteers itself for the OOM killer");
+
+  preferSelfForOomKill();
+
+  std::ifstream in("/proc/self/oom_score_adj");
+  CHECK(in.good());
+  int score = 0;
+  in >> score;
+  CHECK(score == 1000);
+}
+
 int main() {
   if (!std::filesystem::exists(fixtureDir())) {
     std::printf("fixtures missing at %s\nrun: python3 tests/make_fixtures.py\n",
@@ -672,6 +746,9 @@ int main() {
   testMissingFileIsAnError();
   testMemoryEstimateMatchesRealLoad();
   testEstimateDoesNotReadPoints();
+  testEstimateTrustsDeclaredCount();
+  testHostMemoryReadings();
+  testOomScoreAdjustment();
 
   std::printf("\n%d checks, \x1b[%sm%d failures\x1b[0m\n", g_checks, g_failures ? "31" : "32",
               g_failures);

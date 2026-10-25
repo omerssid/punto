@@ -96,6 +96,11 @@ class Ui {
   // changes the panels made this frame.
   void drawViewportAnnotations(const Camera& camera, const Vec3& origin, int width, int height);
 
+  // Shows a dismissible banner over the viewport. Load failures used to go
+  // only to the log, which nobody sees when a file is dropped on the window.
+  void setNotice(std::string text, bool isError);
+  void clearNotice() { notice_.clear(); }
+
   bool panelsVisible() const { return panelsVisible_; }
   void togglePanels() { panelsVisible_ = !panelsVisible_; }
 
@@ -116,6 +121,7 @@ class Ui {
   void drawDisplayPanel(const UiInput& input, RenderSettings& settings, UiActions& actions);
   void drawInspectorPanel(const UiInput& input, UiActions& actions);
   void drawPerformancePanel(const UiInput& input, RenderSettings& settings);
+  void drawNotice();
   void drawStatusBar(const UiInput& input, const Camera& camera);
   void drawFileBrowser(UiActions& actions);
   void drawHelpWindow();
@@ -124,6 +130,9 @@ class Ui {
   bool initialized_ = false;
 
   bool panelsVisible_ = true;
+
+  std::string notice_;
+  bool noticeIsError_ = false;
   bool showView_ = true;
   bool showStatistics_ = true;
   bool showDisplay_ = true;
