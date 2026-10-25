@@ -1,13 +1,11 @@
 # punto
 
-A GPU-driven point cloud viewer for large clouds. Opens a 32-million-point
-HD map in about a second and draws it in under half a millisecond a frame.
+> A GPU-driven point cloud viewer for large clouds. 
 
-Reads PCD, PLY, LAS, LAZ and raw KITTI `.bin`. The name is deliberately not
-a format and not a verb: viewing is what exists today, and processing is
+Reads PCD, PLY, LAS, LAZ and raw KITTI `.bin`. Viewing is what exists today, but processing is
 where this is going.
 
-![The viewer with a 32M-point HD map open](docs/screenshot.png)
+![The viewer with an 87M-point terrestrial laser scan open](docs/screenshot.png)
 
 ## Why
 
@@ -15,8 +13,7 @@ where this is going.
 frustrating about it. One VTK actor holds the whole cloud, so every frame
 redraws every point — there is no spatial subdivision, no culling and no
 level of detail. Vertices go to the GPU as unquantised float32. Parsing runs
-on one core through PCL's templated point-type machinery. And the GUI is a
-generic wrapper that nobody designed for looking at point clouds.
+on one core through PCL's templated point-type machinery.
 
 This is built the other way round:
 
@@ -32,29 +29,33 @@ This is built the other way round:
 
 ## Performance
 
-Measured on an RTX 5060 Laptop GPU with a 32,300,421-point, 493 MB binary
-PCD (`x y z rgb`), 28 worker threads, page cache warm. Loading and chunking
-are CPU work and do not depend on the GPU.
+Measured on an RTX 5060 Laptop GPU with an 86,976,981-point, 1.0 GB LAZ
+terrestrial scan (LAS 1.4 format 7: position, intensity, RGB and nine more
+fields), 28 worker threads, page cache warm. Loading and chunking are CPU
+work and do not depend on the GPU.
 
 | | |
 | --- | --- |
-| Open to first frame | **1.0 s** (0.30 s parse · 0.63 s chunk · upload) |
-| Frame time @ 1920×1080 | **0.47 ms median, 2109 fps** (p95 1.26 ms) |
-| GPU breakdown | cull 0.01 · draw 0.93 · EDL 0.04 ms |
-| Points drawn at overview | ~350 k of 32.3 M (1–10%) |
-| VRAM | 431 MB of 8151 |
-| Host RAM | 1.1 GB peak |
+| Open to first frame | **5.9 s** (4.6 s decompress · 1.3 s chunk · upload) |
+| Frame time @ 1920×1080 | **0.48 ms median, 2098 fps** (p95 0.60 ms) |
+| Points drawn at overview | ~850 k of 87.0 M (~1%) |
+| VRAM | 1161 MB of 8151 |
+| Host RAM | 6.1 GB peak |
 
 The frame cost tracks screen area, not cloud size: a chunk 500 m away whose
 100,000 points land on 40 pixels is drawn with 40 points, because the other
-99,960 cannot be seen.
+99,960 cannot be seen. That is why 87 M points here cost the same per frame
+as a third as many did — the screen did not get any bigger.
 
-The same scene on the integrated GPU runs at 7.4 ms, 135 fps — still
+Almost all of the open is LAZ decompression, which is CPU-bound and
+inherent to the format. Uncompressed data is an order of magnitude faster:
+a 320 MB binary PCD loads at **1545 MB/s**, 20 M points in 207 ms, against
+249 MB/s for LAZ. Decompression does at least scale across cores — 3 M
+points in 179 ms on 28 threads against 1440 ms on one.
+
+The same scene on the integrated GPU runs at 10.5 ms, 95 fps — still
 interactive, because LOD has already capped the work at roughly what the
 screen can show. See *Hybrid graphics* below for when that path gets used.
-
-LAZ decompression scales across cores too — 3 M points in 179 ms on 28
-threads against 1440 ms on one.
 
 ## Building
 
@@ -103,12 +104,12 @@ reloads from disk.
 ./build/punto-viewer --max-points 20000000 huge.laz   # thin a cloud that will not fit
 ```
 
-![Top-down map view coloured by height](docs/screenshot-topdown.png)
+![Top-down view of a UAV laser scan coloured by height](docs/screenshot-topdown.png)
 
-Top-down mode with height mapped through Turbo. The histogram under the
-ramp is the field's real distribution; dragging its edges sets the colour
-range, which is how you pull detail out of a channel whose nominal range is
-set by a handful of outliers.
+A 24.8 M-point UAV scan in top-down mode with height mapped through Turbo.
+The histogram under the ramp is the field's real distribution; dragging its
+edges sets the colour range, which is how you pull detail out of a channel
+whose nominal range is set by a handful of outliers.
 
 ### Controls
 
@@ -161,34 +162,45 @@ separately.
 The same report is available from the terminal:
 
 ```
-$ punto-probe map.pcd
+$ punto-probe scan.laz
 
-  format        PCD (binary)
-  file size     492.9 MB
-  points        32,300,421
+  format        LAZ 1.2 (format 3)
+  file size     184.9 MB
+  points        24,805,259
+  resident      851.6 MB
   colors        yes
+  source rows   tracked
 
   bounds (world)
-    min            -4.3965        -226.0963          -7.4408
-    max           396.8555          68.3249           9.4218
-    size          401.2520         294.4211          16.8626
-    diag  497.9672 m
-  origin          197.0000         -81.0000          -1.0000
+    min        697592.4218     5325703.3569         592.5479
+    max        697755.4056     5325887.5115         628.9901
+    size          162.9838         184.1546          36.4422
+    diag  248.6055 m
+  origin       697674.0000     5325794.0000         615.0000
 
   fields
-    name           type      role              min          max         mean    stddev  distribution
-    x              float32   position      -4.3965     396.8555     225.2695  104.6336  ▇▇▇▇▇▇▇▇▇▇▇▇
-    y              float32   position    -226.0963      68.3249     -87.0321   74.8285  ▆▇▇▇▇▇▇▇▇▇▇▆
-    z              float32   position      -7.4408       9.4218       0.1419    1.4754  ▅▅▅▇▇▆▆▆▅▄▃▂
-    rgb            float32   color      packed -> colour channels below
+    name           type      role                  min            max           mean       stddev  distribution
+    x              int32     position      697592.4218    697755.4056    697667.4344      29.9358  ▅▆▆▇▇▇▇▇▇▇▇▇▇▇▇▆▆▆▆
+    y              int32     position     5325703.3569   5325887.5115   5325809.0050      43.1996  ▆▆▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▆
+    z              int32     position         592.5479       628.9901       610.8141       6.6631  ▁    ▁▆▆▇▆▆▆▆▆▆▆▇▆▅
+    intensity      uint16    intensity          0.0000       255.0000        26.5315      23.7608  ▇▇▇▇▇▇▆▆▆▆▅▅▅▄▃▃▃▂▂
+    return_info    uint8     other              9.0000        45.0000        16.5473       9.7301  ▇    ▇▇   ▆▆▆  ▆▆▆▅
+    classification uint8     label              0.0000         0.0000         0.0000       0.0000  ▇
+                     1 distinct: 0
+    scan_angle     int8      other            -36.0000        35.0000         0.1746      24.1767  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇
+    user_data      uint8     other              0.0000       255.0000       125.9368     107.0430  ▇▇▇▇                ▇▇▇▇
+    gps_time       float64   time       416582038.2646 416582112.2651 416582075.1011      19.3163  ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇
+    red            uint16    color      packed -> colour channels below
+    green          uint16    color      packed -> colour channels below
+    blue           uint16    color      packed -> colour channels below
 
   colour channels
-    red            uint8     color               0          255       158.29     58.93  ▆▆▆▇▇▆▇▇▇▇▇▆
-    green          uint8     color               0          255       155.75     56.22  ▆▆▆▆▆▇▇▇▇▇▇▆
-    blue           uint8     color               0          255       145.50     57.93  ▆▆▇▇▆▆▇▇▇▇▆▆
+    red            uint8     color                   0            254         112.82        52.62  ▇▅▆▆▇▇▇▇▇▇▇▇▇▇▇▇▆▆▆
+    green          uint8     color                   0            254         107.09        46.55  ▇▅▆▆▇▇▇▇▇▇▇▇▇▇▇▇▆▆▅
+    blue           uint8     color                   0            254          99.05        48.31  ▇▆▆▇▇▇▇▇▇▇▇▇▇▇▇▆▆▆▆
 
-  load  316 ms total   (1634 MB/s)
-    map 0.0  header 0.0  decode 233.6  stats 72.4  (ms)
+  load  1190 ms total   (163 MB/s)
+    map 0.0  header 0.0  decode 1060.0  stats 120.5  (ms)
     28 worker threads
 ```
 
@@ -292,7 +304,7 @@ UI changing.
 ## Hybrid graphics
 
 On a laptop with both an integrated and a discrete GPU, a program that does
-nothing special renders on the integrated one — `pcl_viewer` included. This
+nothing special renders on the integrated one. This
 viewer selects the discrete GPU itself at startup, with no wrapper script.
 
 The exception is when an external monitor is wired to the discrete GPU while
