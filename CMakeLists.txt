@@ -54,11 +54,13 @@ add_library(punto-core STATIC
   src/core/log.cpp
   src/core/parallel.cpp
   src/core/math.cpp
+  src/core/memory.cpp
   src/io/field.cpp
   src/io/point_cloud.cpp
   src/io/mapped_file.cpp
   src/io/lzf.cpp
   src/io/cloud_builder.cpp
+  src/io/cloud_info.cpp
   src/io/loader.cpp
   src/io/pcd_loader.cpp
   src/io/ply_loader.cpp

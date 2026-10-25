@@ -9,9 +9,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 #include "io/cloud_builder.hpp"
+#include "io/cloud_info.hpp"
 #include "io/loader.hpp"
 #include "io/laz_decode.hpp"
 #include "io/lzf.hpp"
@@ -559,6 +561,90 @@ void testMissingFileIsAnError() {
 
 }  // namespace
 
+
+// The header-only estimate must agree with what a full load actually
+// allocates. It is easy to get this wrong in a way nothing notices: the
+// first version read column widths from buildDecodePlan's metadata, where
+// every type is still the default, and silently over-reported by 37% on a
+// LAS format 7 file. Comparing against a real load is what caught it.
+void testMemoryEstimateMatchesRealLoad() {
+  beginTest("memory estimate matches a real load");
+
+  static const char* kFixtures[] = {
+      "helix_ascii.pcd", "helix_binary.pcd", "helix_compressed.pcd", "helix_rgb.pcd",
+      "helix_greyscale.pcd", "helix_ascii.ply", "helix_le.ply", "helix_be.ply",
+      "helix_12_fmt0.las", "helix_12_fmt3.las", "helix_14_fmt7.las", "helix.bin",
+  };
+
+  for (const char* name : kFixtures) {
+    if (!fixtureExists(name)) continue;
+    const std::string path = (fixtureDir() / name).string();
+
+    LoadOptions options;
+    const CloudInfo info = probeCloud(path, options);
+    CHECK(info.ok);
+    if (!info.ok) continue;
+
+    PointCloud cloud;
+    const LoadResult result = loadPointCloud(path, options, cloud);
+    CHECK(result.ok);
+    if (!result.ok) continue;
+
+    // The header's declared count is before invalid points are dropped, so
+    // compare per-point cost rather than totals for fixtures that drop any.
+    const std::uint64_t actualPerPoint =
+        cloud.size() > 0 ? cloud.memoryBytes() / cloud.size() : 0;
+    if (actualPerPoint != info.memory.bytesPerPoint)
+      fail(__FILE__, __LINE__,
+           std::string(name) + ": estimated " + std::to_string(info.memory.bytesPerPoint) +
+               " B/point, load used " + std::to_string(actualPerPoint));
+    else
+      ++g_checks;
+
+    // Point counts must agree too -- an estimate against the wrong count is
+    // just as useless as one against the wrong width.
+    if (cloud.invalidPointsDropped == 0 && info.pointCount != cloud.size())
+      fail(__FILE__, __LINE__,
+           std::string(name) + ": header declares " + std::to_string(info.pointCount) +
+               " points, load produced " + std::to_string(cloud.size()));
+    else
+      ++g_checks;
+  }
+}
+
+// The estimate must not read the point data: that is the entire reason it
+// exists. A file whose header is intact but whose payload is truncated must
+// still estimate cleanly.
+void testEstimateDoesNotReadPoints() {
+  beginTest("estimate reads only the header");
+  if (!fixtureExists("helix_binary.pcd")) return;
+
+  const std::filesystem::path src = fixtureDir() / "helix_binary.pcd";
+  const std::filesystem::path cut =
+      std::filesystem::temp_directory_path() / "punto_truncated.pcd";
+
+  const auto full = std::filesystem::file_size(src);
+  {
+    std::ifstream in(src, std::ios::binary);
+    std::ofstream out(cut, std::ios::binary);
+    std::vector<char> buf(static_cast<std::size_t>(full));
+    in.read(buf.data(), static_cast<std::streamsize>(full));
+    // Keep the header and a token amount of payload.
+    out.write(buf.data(), static_cast<std::streamsize>(std::min<std::uint64_t>(full, 1024)));
+  }
+
+  const CloudInfo info = probeCloud(cut.string(), LoadOptions{});
+  CHECK(info.ok);
+  // The header still declares the full point count, and the estimate must
+  // report it rather than what survives in the file.
+  CHECK(info.pointCount > 0);
+  CHECK(info.memory.bytesPerPoint > 0);
+  CHECK(info.memory.peakHostPadded() >= info.memory.peakHost());
+
+  std::error_code ec;
+  std::filesystem::remove(cut, ec);
+}
+
 int main() {
   if (!std::filesystem::exists(fixtureDir())) {
     std::printf("fixtures missing at %s\nrun: python3 tests/make_fixtures.py\n",
@@ -584,6 +670,8 @@ int main() {
   testStatsAgainstKnownValues();
   testLzfEdgeCases();
   testMissingFileIsAnError();
+  testMemoryEstimateMatchesRealLoad();
+  testEstimateDoesNotReadPoints();
 
   std::printf("\n%d checks, \x1b[%sm%d failures\x1b[0m\n", g_checks, g_failures ? "31" : "32",
               g_failures);

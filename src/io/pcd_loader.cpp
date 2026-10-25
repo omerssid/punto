@@ -14,6 +14,7 @@
 #include "core/log.hpp"
 #include "core/parallel.hpp"
 #include "io/cloud_builder.hpp"
+#include "io/cloud_info.hpp"
 #include "io/lzf.hpp"
 #include "io/mapped_file.hpp"
 
@@ -438,6 +439,34 @@ LoadResult loadPcd(const std::string& path, const LoadOptions& options, PointClo
   out.timing.totalMs = totalTimer.elapsedMs();
   result.ok = true;
   return result;
+}
+
+
+bool probePcdHeader(const std::string& path, CloudInfo& info) {
+  MappedFile file;
+  std::string error;
+  if (!file.open(path, error)) {
+    info.error = std::move(error);
+    return false;
+  }
+
+  PcdHeader header;
+  const std::size_t headerSearch = std::min<std::size_t>(file.size(), 64u * 1024u);
+  if (!parseHeader(std::string_view(file.chars(), headerSearch), header, info.error,
+                   info.warnings))
+    return false;
+
+  info.recordStride = layoutFields(header.fields);
+  info.pointCount = header.points;
+  info.fields = std::move(header.fields);
+  static const char* kEncoding[] = {"ascii", "binary", "binary_compressed"};
+  info.formatName = std::string("PCD ") + kEncoding[static_cast<int>(header.data)];
+
+  // Binary PCD decodes straight out of the mapping; the other two encodings
+  // are first materialised as interleaved records.
+  if (header.data != PcdData::Binary)
+    info.memory.decodeBuffer = info.recordStride * info.pointCount;
+  return true;
 }
 
 }  // namespace punto

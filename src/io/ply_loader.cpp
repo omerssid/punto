@@ -15,6 +15,7 @@
 #include "core/log.hpp"
 #include "core/parallel.hpp"
 #include "io/cloud_builder.hpp"
+#include "io/cloud_info.hpp"
 #include "io/mapped_file.hpp"
 
 namespace punto {
@@ -386,6 +387,43 @@ LoadResult loadPly(const std::string& path, const LoadOptions& options, PointClo
   out.timing.totalMs = totalTimer.elapsedMs();
   result.ok = true;
   return result;
+}
+
+
+bool probePlyHeader(const std::string& path, CloudInfo& info) {
+  MappedFile file;
+  std::string error;
+  if (!file.open(path, error)) {
+    info.error = std::move(error);
+    return false;
+  }
+
+  PlyHeader header;
+  const std::size_t headerSearch = std::min<std::size_t>(file.size(), 256u * 1024u);
+  if (!parseHeader(std::string_view(file.chars(), headerSearch), header, info.error))
+    return false;
+
+  const PlyElement* vertex = nullptr;
+  for (const PlyElement& e : header.elements)
+    if (e.name == "vertex") vertex = &e;
+  if (vertex == nullptr) {
+    info.error = "PLY: no 'vertex' element";
+    return false;
+  }
+
+  for (const PlyProperty& property : vertex->properties) {
+    if (property.isList) continue;
+    info.fields.push_back(SourceField{property.name, property.type, 1, 0});
+  }
+  info.recordStride = layoutFields(info.fields);
+  info.pointCount = vertex->count;
+  static const char* kFormat[] = {"ascii", "binary_little_endian", "binary_big_endian"};
+  info.formatName = std::string("PLY ") + kFormat[static_cast<int>(header.format)];
+
+  // Binary payloads decode in place; ASCII is parsed into records first.
+  if (header.format == PlyFormat::Ascii)
+    info.memory.decodeBuffer = info.recordStride * info.pointCount;
+  return true;
 }
 
 }  // namespace punto

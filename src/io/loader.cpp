@@ -1,6 +1,7 @@
 #include "io/loader.hpp"
 
 #include <algorithm>
+#include <format>
 #include <cctype>
 #include <cstring>
 #include <filesystem>
@@ -8,6 +9,7 @@
 
 #include "core/log.hpp"
 #include "io/cloud_builder.hpp"
+#include "io/cloud_info.hpp"
 #include "io/mapped_file.hpp"
 
 namespace punto {
@@ -34,6 +36,22 @@ std::string readPrefix(const std::string& path, std::size_t n) {
 bool startsWith(std::string_view s, std::string_view prefix) {
   return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 }
+
+// Raw .bin is headerless: a flat array of float32 tuples. KITTI uses 4
+// (x y z intensity), nuScenes 5 (adding ring), and some tools emit 3 or 6.
+// Prefer the requested count, falling back to whatever divides the file size
+// evenly. Returns 0 when nothing does.
+int inferBinFieldCount(std::uint64_t fileBytes, int requested) {
+  requested = std::clamp(requested, 3, 8);
+  for (int candidate : {requested, 4, 3, 5, 6, 2})
+    if (candidate >= 3 && fileBytes % (sizeof(float) * static_cast<std::size_t>(candidate)) == 0)
+      return candidate;
+  return 0;
+}
+
+// Names punto gives the columns of a headerless .bin.
+const char* kBinFieldNames[] = {"x",      "y",      "z",      "intensity",
+                                "field4", "field5", "field6", "field7"};
 
 }  // namespace
 
@@ -82,17 +100,8 @@ LoadResult loadKittiBin(const std::string& path, const LoadOptions& options, Poi
   if (!file.open(path, error)) return LoadResult::failure(std::move(error));
   out.timing.mapMs = mapTimer.elapsedMs();
 
-  // Headerless: a flat array of float32 tuples. KITTI uses 4 (x y z
-  // intensity); some tools emit 3, 5 or 6. Prefer the requested count but
-  // fall back to whatever divides the file size evenly.
   const int requested = std::clamp(options.rawBinFieldCount, 3, 8);
-  int fieldCount = 0;
-  for (int candidate : {requested, 4, 3, 5, 6, 2}) {
-    if (candidate >= 3 && file.size() % (sizeof(float) * static_cast<std::size_t>(candidate)) == 0) {
-      fieldCount = candidate;
-      break;
-    }
-  }
+  const int fieldCount = inferBinFieldCount(file.size(), requested);
   if (fieldCount == 0)
     return LoadResult::failure("raw .bin: size " + std::to_string(file.size()) +
                                " is not a whole number of float32 tuples");
@@ -100,9 +109,9 @@ LoadResult loadKittiBin(const std::string& path, const LoadOptions& options, Poi
     result.warnings.push_back("raw .bin: assuming " + std::to_string(fieldCount) +
                               " float32 fields per point based on file size");
 
-  static const char* kNames[] = {"x", "y", "z", "intensity", "field4", "field5", "field6", "field7"};
   std::vector<SourceField> fields;
-  for (int i = 0; i < fieldCount; ++i) fields.push_back(SourceField{kNames[i], FieldType::F32, 1, 0});
+  for (int i = 0; i < fieldCount; ++i)
+    fields.push_back(SourceField{kBinFieldNames[i], FieldType::F32, 1, 0});
 
   const std::size_t recordStride = layoutFields(fields);
   const std::size_t pointCount = file.size() / recordStride;
@@ -142,6 +151,28 @@ LoadResult loadKittiBin(const std::string& path, const LoadOptions& options, Poi
   out.timing.totalMs = totalTimer.elapsedMs();
   result.ok = true;
   return result;
+}
+
+// The path is unused: a headerless .bin says everything in its size alone.
+bool probeKittiBinHeader(const std::string&, const LoadOptions& options, CloudInfo& info) {
+  const int requested = std::clamp(options.rawBinFieldCount, 3, 8);
+  const int fieldCount = inferBinFieldCount(info.fileBytes, requested);
+  if (fieldCount == 0) {
+    info.error = "raw .bin: size " + std::to_string(info.fileBytes) +
+                 " is not a whole number of float32 tuples";
+    return false;
+  }
+  if (fieldCount != requested)
+    info.warnings.push_back("raw .bin: assuming " + std::to_string(fieldCount) +
+                            " float32 fields per point based on file size");
+
+  for (int i = 0; i < fieldCount; ++i)
+    info.fields.push_back(SourceField{kBinFieldNames[i], FieldType::F32, 1, 0});
+  info.recordStride = layoutFields(info.fields);
+  info.pointCount = info.recordStride > 0 ? info.fileBytes / info.recordStride : 0;
+  info.formatName = std::format("raw binary, {} float32 fields", fieldCount);
+  // Decoded straight out of the mapping.
+  return true;
 }
 
 LoadResult loadPointCloud(const std::string& path, const LoadOptions& options, PointCloud& out,

@@ -13,6 +13,8 @@
 
 #include "core/log.hpp"
 #include "core/parallel.hpp"
+#include "core/memory.hpp"
+#include "io/cloud_info.hpp"
 #include "io/loader.hpp"
 #include "scene/chunk.hpp"
 #include "scene/ram_chunk_source.hpp"
@@ -237,6 +239,61 @@ void printChunkReport(const PointCloud& cloud, const std::vector<Chunk>& chunks,
   std::printf("\n");
 }
 
+// Header-only report: what the file declares and what opening it would cost.
+// Deliberately prints before anything large is allocated, which is the whole
+// point of having it.
+void printEstimate(const CloudInfo& info) {
+  std::printf("\n\x1b[1m%s\x1b[0m\n", info.formatName.c_str());
+  std::printf("  file size     %s\n", humanBytes(info.fileBytes).c_str());
+  std::printf("  points        %s\n", withThousands(info.pointCount).c_str());
+  std::printf("  record        %zu B x %s declared fields\n", info.recordStride,
+              withThousands(info.fields.size()).c_str());
+
+  std::printf("  fields        ");
+  for (std::size_t i = 0; i < info.fields.size(); ++i)
+    std::printf("%s%s", i == 0 ? "" : " ", info.fields[i].name.c_str());
+  std::printf("\n");
+
+  if (info.boundsKnown) {
+    const Vec3 size{info.maxBound.x - info.minBound.x, info.maxBound.y - info.minBound.y,
+                    info.maxBound.z - info.minBound.z};
+    std::printf("  extent        %.3f x %.3f x %.3f m  (from the header)\n", size.x, size.y,
+                size.z);
+  } else {
+    std::printf("  extent        unknown until the points are read\n");
+  }
+
+  const MemoryEstimate& m = info.memory;
+  std::printf("\n  \x1b[1mpredicted cost\x1b[0m\n");
+  std::printf("    per point     %u B in RAM\n", m.bytesPerPoint);
+  if (m.decodeBuffer > 0)
+    std::printf("    decode buffer %s   (decompressed records, freed after load)\n",
+                humanBytes(m.decodeBuffer).c_str());
+  std::printf("    point cloud   %s\n", humanBytes(m.pointCloud).c_str());
+  std::printf("    chunk scratch %s   (transient, during chunk building)\n",
+              humanBytes(m.chunkScratch).c_str());
+  std::printf("    \x1b[1mpeak RAM      %s\x1b[0m   (%s allowing for allocator overhead)\n",
+              humanBytes(m.peakHost()).c_str(), humanBytes(m.peakHostPadded()).c_str());
+  std::printf("    GPU vertex    %s\n", humanBytes(m.gpuVertex).c_str());
+
+  const std::uint64_t avail = availableMemoryBytes();
+  const std::uint64_t total = totalMemoryBytes();
+  if (avail > 0) {
+    std::printf("\n  host          %s available of %s\n", humanBytes(avail).c_str(),
+                humanBytes(total).c_str());
+    if (m.peakHostPadded() > avail)
+      std::printf("  \x1b[31mverdict       will not fit: needs %s more than is available\x1b[0m\n",
+                  humanBytes(m.peakHostPadded() - avail).c_str());
+    else if (m.peakHostPadded() > avail / 2)
+      std::printf("  \x1b[33mverdict       fits, but uses over half of available memory\x1b[0m\n");
+    else
+      std::printf("  \x1b[32mverdict       fits comfortably\x1b[0m\n");
+  }
+
+  for (const std::string& w : info.warnings)
+    std::printf("  \x1b[33mwarning\x1b[0m       %s\n", w.c_str());
+}
+
 void usage() {
   std::printf(
       "usage: punto-probe [options] <file> [<file> ...]\n"
@@ -245,6 +302,8 @@ void usage() {
       "  --no-source-index  do not record each point's source row\n"
       "  --threads N        worker threads (default: all cores)\n"
       "  --bin-fields N     float32 fields per point for raw .bin (default 4)\n"
+      "  --estimate         read only the header: report size and memory cost,\n"
+      "                     then exit without loading any points\n"
       "  --chunks           build the chunk/LOD tree and report it\n"
       "  --chunk-size N     max points per chunk (default 131072)\n"
       "  -v                 verbose timing\n");
@@ -256,6 +315,7 @@ int main(int argc, char** argv) {
   LoadOptions options;
   ChunkBuildOptions chunkOptions;
   bool doChunks = false;
+  bool estimateOnly = false;
   std::vector<std::string> paths;
 
   for (int i = 1; i < argc; ++i) {
@@ -264,6 +324,7 @@ int main(int argc, char** argv) {
     else if (arg == "--no-source-index") options.keepSourceIndex = false;
     else if (arg == "--threads" && i + 1 < argc) options.workers = static_cast<unsigned>(std::atoi(argv[++i]));
     else if (arg == "--bin-fields" && i + 1 < argc) options.rawBinFieldCount = std::atoi(argv[++i]);
+    else if (arg == "--estimate") estimateOnly = true;
     else if (arg == "--chunks") doChunks = true;
     else if (arg == "--chunk-size" && i + 1 < argc) {
       chunkOptions.maxPointsPerChunk = static_cast<unsigned>(std::atoi(argv[++i]));
@@ -279,6 +340,18 @@ int main(int argc, char** argv) {
 
   int failures = 0;
   for (const std::string& path : paths) {
+    if (estimateOnly) {
+      const CloudInfo info = probeCloud(path, options);
+      if (!info.ok) {
+        std::fprintf(stderr, "\x1b[31merror\x1b[0m  %s: %s\n", path.c_str(), info.error.c_str());
+        ++failures;
+        continue;
+      }
+      std::printf("\n\x1b[1m%s\x1b[0m", path.c_str());
+      printEstimate(info);
+      continue;
+    }
+
     PointCloud cloud;
     const LoadResult result = loadPointCloud(path, options, cloud);
     if (!result.ok) {

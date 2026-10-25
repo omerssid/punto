@@ -17,6 +17,7 @@
 #include "core/log.hpp"
 #include "core/parallel.hpp"
 #include "io/cloud_builder.hpp"
+#include "io/cloud_info.hpp"
 #include "io/laz_decode.hpp"
 #include "io/mapped_file.hpp"
 
@@ -375,6 +376,42 @@ LoadResult loadLas(const std::string& path, const LoadOptions& options, PointClo
   out.timing.totalMs = totalTimer.elapsedMs();
   result.ok = true;
   return result;
+}
+
+
+bool probeLasHeader(const std::string& path, CloudInfo& info) {
+  MappedFile file;
+  std::string error;
+  if (!file.open(path, error)) {
+    info.error = std::move(error);
+    return false;
+  }
+
+  LasHeader header;
+  if (!parseHeader(file, header, info.error)) return false;
+
+  LasLayout layout;
+  if (!layoutForFormat(header.pointFormat, layout, info.error)) return false;
+
+  const std::size_t naturalStride = layoutFields(layout.fields);
+  info.pointCount = header.pointCount;
+  info.fields = std::move(layout.fields);
+  info.hasColor = layout.hasColor;
+  info.recordStride = header.compressed ? naturalStride : header.pointRecordLength;
+  info.formatName = std::format("{} 1.{} (format {})", header.compressed ? "LAZ" : "LAS",
+                                header.versionMinor, header.pointFormat);
+
+  // Alone among the formats punto reads, LAS states its extent up front.
+  info.boundsKnown = true;
+  info.minBound = Vec3{header.minBound[0], header.minBound[1], header.minBound[2]};
+  info.maxBound = Vec3{header.maxBound[0], header.maxBound[1], header.maxBound[2]};
+
+  // LAZ decompresses into a full-size record buffer that stays resident
+  // until the whole cloud is built.
+  if (header.compressed) info.memory.decodeBuffer = naturalStride * header.pointCount;
+  if (header.compressed && !lazSupported())
+    info.warnings.push_back("LAZ support is not compiled in; this file cannot be opened");
+  return true;
 }
 
 }  // namespace punto
