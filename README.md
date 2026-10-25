@@ -100,6 +100,7 @@ reloads from disk.
 ./build/punto-viewer cloud.pcd          # or drag a file onto the window
 ./build/punto-viewer --color scalar --field intensity --ramp turbo scan.las
 ./build/punto-viewer --nav top map.laz  # open straight into the map view
+./build/punto-viewer --max-points 20000000 huge.laz   # thin a cloud that will not fit
 ```
 
 ![Top-down map view coloured by height](docs/screenshot-topdown.png)
@@ -127,7 +128,7 @@ set by a handful of outliers.
 
 `--help` lists the full command line, including `--screenshot`,
 `--benchmark` and `--pick`, which drive the viewer without an interactive
-session.
+session, and the memory flags described under [Large files](#large-files).
 
 ## Formats
 
@@ -193,6 +194,64 @@ $ punto-probe map.pcd
 
 Add `--chunks` to also build the chunk tree and report its shape, GPU memory
 and quantization error.
+
+## Large files
+
+A point cloud that does not fit in memory does not fail politely. The
+desktop goes to swap, the page cache is evicted, and the kernel's OOM
+killer picks whichever process it scores highest — which is rarely the one
+that caused the pressure. The first thing you see is a frozen screen.
+
+So punto checks before it allocates. `--estimate` reads only the header:
+
+```
+$ punto-probe --estimate scan.laz
+
+  LAZ 1.4 (format 7)
+  file size     1.0 GB
+  points        86,976,981
+  record        36 B x 14 declared fields
+  fields        x y z intensity return_info class_flags classification
+                user_data scan_angle point_source_id gps_time red green blue
+
+  predicted cost
+    per point     38 B in RAM
+    decode buffer 2.9 GB   (decompressed records, freed after load)
+    point cloud   3.1 GB
+    chunk scratch 1.3 GB   (transient, during chunk building)
+    peak RAM      6.0 GB   (6.9 GB allowing for allocator overhead)
+    GPU vertex    1.1 GB
+
+  host          20.7 GB available of 31.1 GB
+  verdict       fits comfortably
+```
+
+That takes 4 ms on a 1 GB file, against 5.5 s to load it properly. The
+viewer runs the same check on every open and refuses, naming both figures,
+rather than trying and taking the session down with it. `--force` overrides
+it. punto also raises its own `oom_score_adj` at startup, so if memory does
+run out the kernel kills the viewer instead of your browser.
+
+When a file genuinely will not fit, two flags make it open anyway:
+
+| Flag | Effect |
+| --- | --- |
+| `--max-points N` | Keep every Nth point so the cloud still covers the same ground, rather than the first N, which would cover a corner of it. |
+| `--drop-fields A,B` | Leave named scalar fields undecoded and uncolumned. Positions and colour are never dropped. |
+
+Dropping has to happen before the decode: a column freed afterwards has
+already cost the peak you could not afford. On the 87M-point scan above,
+GPS time alone is 8 bytes a point, and five more fields are constant zero.
+
+```
+                                     peak RAM   load
+  as-is                                6.01 GB   5485 ms
+  --drop-fields gps_time,...           4.80 GB
+  --max-points 20000000                3.55 GB
+  both                                 3.32 GB   3167 ms
+```
+
+Predictions match measurements within 1.5% across all four.
 
 ## How it works
 
