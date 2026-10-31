@@ -159,7 +159,8 @@ jobs:
     name: install on ${{ matrix.image }}
     # The .deb's Depends line names packages as they exist on 22.04. Each
     # release below has to resolve all of them from its own archive, and
-    # nothing short of a clean install proves that it does.
+    # nothing short of a clean install proves that it does. Debian 12 also
+    # covers the case where the recommended laszip does not exist.
     needs: build
     runs-on: ubuntu-latest
     strategy:
@@ -184,7 +185,18 @@ jobs:
           # A library apt could not supply would show up here, not in apt.
           if ldd /usr/bin/punto-viewer | grep "not found"; then exit 1; fi
           punto-viewer --version
-          punto-probe tests/fixtures/helix_12_fmt3.laz > /dev/null
+          # liblaszip8 is only recommended, and Debian 12 has none. Where
+          # apt installed it LAZ must open; where it could not, LAZ must be
+          # refused with the install hint rather than crash.
+          if dpkg -s liblaszip8 > /dev/null 2>&1; then
+            punto-probe tests/fixtures/helix_12_fmt3.laz > /dev/null
+          else
+            if punto-probe tests/fixtures/helix_12_fmt3.laz > probe.log 2>&1; then
+              echo "::error::LAZ opened without laszip installed"; exit 1
+            fi
+            grep -q "apt install liblaszip8" probe.log
+            echo "no laszip here: LAZ refused as expected"
+          fi
           test -f /usr/share/applications/punto.desktop
           test -f /usr/share/icons/hicolor/scalable/apps/punto.svg
           test -f /usr/share/mime/packages/punto.xml

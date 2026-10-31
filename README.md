@@ -82,6 +82,10 @@ This installs `punto-viewer` and `punto-probe`, an entry in the
 application menu, and file associations for `.pcd`, `.ply`, `.las` and
 `.laz`. `sudo apt remove punto` takes it all out again.
 
+LAZ support comes from `liblaszip8`, which apt installs alongside it by
+default. Debian 12 does not package laszip at all, so there punto
+installs without it and refuses `.laz` files; every other format works.
+
 The packaged binary is built without `-march=native` so it runs on any
 x86-64 CPU. Building from source gives one tuned to your own machine,
 which is faster on the load path.

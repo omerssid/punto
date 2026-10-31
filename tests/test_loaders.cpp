@@ -460,7 +460,7 @@ void testLasColorDepthHeuristic() {
 void testLazMatchesLas() {
   beginTest("LAZ decodes identically to the LAS it was compressed from");
   if (!lazSupported()) {
-    std::printf("  skipping (this build has no laszip)\n");
+    std::printf("  skipping (laszip unavailable)\n");
     return;
   }
   const char* pairs[][2] = {
@@ -496,7 +496,7 @@ void testLazFormatName() {
   beginTest("LAZ reports itself as compressed");
   if (!std::filesystem::exists(fixtureDir() / "helix_12_fmt3.laz")) return;
   if (!lazSupported()) {
-    std::printf("  skipping (this build has no laszip)\n");
+    std::printf("  skipping (laszip unavailable)\n");
     return;
   }
   const PointCloud laz = load("helix_12_fmt3.laz");
@@ -508,13 +508,13 @@ void testLazFormatName() {
            static_cast<int>(CloudFormat::Las));
 }
 
-// A build without laszip must refuse a LAZ file cleanly and say what to do
-// about it, rather than crashing or returning an empty cloud that looks
-// like a corrupt file.
+// Without laszip -- not built in, or not installed -- a LAZ file must be
+// refused cleanly with what to do about it, rather than crashing or
+// returning an empty cloud that looks like a corrupt file.
 void testLazWithoutLaszipIsRefusedGracefully() {
-  beginTest("a build without laszip refuses LAZ with instructions");
+  beginTest("without laszip, LAZ is refused with instructions");
   if (lazSupported()) {
-    std::printf("  skipping (this build has laszip)\n");
+    std::printf("  skipping (laszip is available)\n");
     return;
   }
   if (!std::filesystem::exists(fixtureDir() / "helix_12_fmt3.laz")) return;

@@ -208,11 +208,7 @@ LoadResult loadLas(const std::string& path, const LoadOptions& options, PointClo
   // Recorded before the mapping may be released for the LAZ path.
   const std::uint64_t fileBytes = file.size();
 
-  if (header.compressed && !lazSupported()) {
-    return LoadResult::failure(
-        "LAZ files are compressed and this build has no laszip. Install "
-        "liblaszip-dev and re-run cmake.");
-  }
+  if (header.compressed && !lazSupported()) return LoadResult::failure(lazUnavailableReason());
 
   LasLayout layout;
   if (!layoutForFormat(header.pointFormat, layout, error))
@@ -412,7 +408,7 @@ bool probeLasHeader(const std::string& path, CloudInfo& info) {
   // until the whole cloud is built.
   if (header.compressed) info.memory.decodeBuffer = naturalStride * header.pointCount;
   if (header.compressed && !lazSupported())
-    info.warnings.push_back("LAZ support is not compiled in; this file cannot be opened");
+    info.warnings.push_back(lazUnavailableReason());
   return true;
 }
 

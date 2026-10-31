@@ -2,8 +2,8 @@
 //
 // Kept separate from las_loader.cpp so that file stays free of conditional
 // compilation: the LAS reader calls decodeLazPoints unconditionally, and
-// the stub below reports the missing dependency when laszip was not found
-// at configure time.
+// the stub reports the missing dependency when laszip was not found at
+// configure time, or could not be loaded at runtime.
 #pragma once
 
 #include <cstddef>
@@ -17,8 +17,13 @@
 
 namespace punto {
 
-// True when this build can decompress LAZ.
+// True when LAZ can be decompressed: the build found laszip's header, and
+// the library itself loads at runtime.
 bool lazSupported();
+
+// Why lazSupported() is false, worded for the user and naming what to
+// install. Empty when it is true.
+std::string lazUnavailableReason();
 
 // Decompresses the point records of `path` into `records`, laid out exactly
 // as the equivalent uncompressed LAS file would store them, so the same

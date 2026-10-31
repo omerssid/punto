@@ -8,6 +8,7 @@
 #include "core/parallel.hpp"
 
 #ifdef PUNTO_HAVE_LASZIP
+#include <dlfcn.h>
 #include <laszip/laszip_api.h>
 #endif
 
@@ -17,18 +18,83 @@ namespace punto {
 
 bool lazSupported() { return false; }
 
+std::string lazUnavailableReason() {
+  return "LAZ files are compressed and this build has no laszip. Install liblaszip-dev "
+         "and re-run cmake.";
+}
+
 bool decodeLazPoints(const std::string&, const std::vector<SourceField>&, std::size_t,
                      std::uint8_t, std::size_t, unsigned, std::stop_token,
                      LargeBuffer<std::byte>&, std::vector<std::string>&, std::string& error) {
-  error =
-      "LAZ files are compressed and this build has no laszip. Install liblaszip-dev "
-      "and re-run cmake.";
+  error = lazUnavailableReason();
   return false;
 }
 
 #else
 
 namespace {
+
+// laszip is loaded when first needed rather than linked, so the viewer
+// still installs and runs where the library is unavailable -- Debian 12
+// does not package it at all -- and only LAZ is refused there.
+//
+// The soname is fixed because it names the ABI the header was written
+// for; a liblaszip.so.9 would be a different ABI and wrong to load.
+constexpr const char* kLaszipSoname = "liblaszip.so.8";
+
+// The functions the decoder calls, typed from their declarations in the
+// header so the pointers cannot drift from it.
+struct LaszipApi {
+  decltype(&::laszip_create) create = nullptr;
+  decltype(&::laszip_destroy) destroy = nullptr;
+  decltype(&::laszip_get_error) get_error = nullptr;
+  decltype(&::laszip_open_reader) open_reader = nullptr;
+  decltype(&::laszip_close_reader) close_reader = nullptr;
+  decltype(&::laszip_get_point_pointer) get_point_pointer = nullptr;
+  decltype(&::laszip_seek_point) seek_point = nullptr;
+  decltype(&::laszip_read_point) read_point = nullptr;
+  std::string loadError;  // empty when every function resolved
+
+  bool ok() const { return loadError.empty(); }
+};
+
+template <typename F>
+bool resolve(void* library, const char* name, F& out, std::string& error) {
+  out = reinterpret_cast<F>(dlsym(library, name));
+  if (out == nullptr && error.empty())
+    error = std::string(kLaszipSoname) + " has no symbol " + name;
+  return out != nullptr;
+}
+
+LaszipApi loadLaszip() {
+  LaszipApi api;
+  // Never closed: decoders may run until exit, and unloading saves nothing.
+  void* library = dlopen(kLaszipSoname, RTLD_NOW | RTLD_LOCAL);
+  if (library == nullptr) {
+    api.loadError = "LAZ files are compressed and laszip is not installed (" +
+                    std::string(dlerror()) +
+                    "). Install it with: sudo apt install liblaszip8";
+    return api;
+  }
+  std::string& e = api.loadError;
+  resolve(library, "laszip_create", api.create, e);
+  resolve(library, "laszip_destroy", api.destroy, e);
+  resolve(library, "laszip_get_error", api.get_error, e);
+  resolve(library, "laszip_open_reader", api.open_reader, e);
+  resolve(library, "laszip_close_reader", api.close_reader, e);
+  resolve(library, "laszip_get_point_pointer", api.get_point_pointer, e);
+  resolve(library, "laszip_seek_point", api.seek_point, e);
+  resolve(library, "laszip_read_point", api.read_point, e);
+  if (api.ok()) logDebug("loaded {}", kLaszipSoname);
+  return api;
+}
+
+// Loaded once, on first use; a function-local static makes that
+// thread-safe for the loader's workers.
+const LaszipApi& laszip() {
+  static const LaszipApi api = loadLaszip();
+  return api;
+}
 
 // Writes one value into the record at a field's offset.
 template <typename T>
@@ -142,7 +208,7 @@ void writeRecord(const laszip_point* point, const RecordOffsets& o, bool legacy,
 
 std::string lastError(laszip_POINTER reader) {
   laszip_CHAR* message = nullptr;
-  if (reader != nullptr && laszip_get_error(reader, &message) == 0 && message != nullptr)
+  if (reader != nullptr && laszip().get_error(reader, &message) == 0 && message != nullptr)
     return message;
   return "unknown laszip error";
 }
@@ -153,18 +219,18 @@ class LaszipReader {
   ~LaszipReader() { close(); }
 
   bool open(const std::string& path, std::string& error) {
-    if (laszip_create(&handle_) != 0) {
+    if (laszip().create(&handle_) != 0) {
       error = "laszip_create failed";
       return false;
     }
     laszip_BOOL compressed = 0;
-    if (laszip_open_reader(handle_, path.c_str(), &compressed) != 0) {
+    if (laszip().open_reader(handle_, path.c_str(), &compressed) != 0) {
       error = lastError(handle_);
       close();
       return false;
     }
     opened_ = true;
-    if (laszip_get_point_pointer(handle_, &point_) != 0) {
+    if (laszip().get_point_pointer(handle_, &point_) != 0) {
       error = lastError(handle_);
       close();
       return false;
@@ -174,7 +240,7 @@ class LaszipReader {
 
   bool seek(std::size_t index, std::string& error) {
     if (index == 0) return true;
-    if (laszip_seek_point(handle_, static_cast<laszip_I64>(index)) != 0) {
+    if (laszip().seek_point(handle_, static_cast<laszip_I64>(index)) != 0) {
       error = lastError(handle_);
       return false;
     }
@@ -182,7 +248,7 @@ class LaszipReader {
   }
 
   bool read(std::string& error) {
-    if (laszip_read_point(handle_) != 0) {
+    if (laszip().read_point(handle_) != 0) {
       error = lastError(handle_);
       return false;
     }
@@ -193,8 +259,8 @@ class LaszipReader {
 
   void close() {
     if (handle_ == nullptr) return;
-    if (opened_) laszip_close_reader(handle_);
-    laszip_destroy(handle_);
+    if (opened_) laszip().close_reader(handle_);
+    laszip().destroy(handle_);
     handle_ = nullptr;
     point_ = nullptr;
     opened_ = false;
@@ -208,7 +274,9 @@ class LaszipReader {
 
 }  // namespace
 
-bool lazSupported() { return true; }
+bool lazSupported() { return laszip().ok(); }
+
+std::string lazUnavailableReason() { return laszip().loadError; }
 
 bool decodeLazPoints(const std::string& path, const std::vector<SourceField>& fields,
                      std::size_t stride, std::uint8_t pointFormat, std::size_t pointCount,

@@ -85,13 +85,15 @@ target_link_libraries(punto-core PUBLIC punto-flags)
 find_package(Threads REQUIRED)
 target_link_libraries(punto-core PUBLIC Threads::Threads)
 
-# Optional: compressed LAS. Everything else builds without it.
+# Optional: compressed LAS. Everything else builds without it. Only the
+# header is needed at build time: the library is dlopen()ed on first use,
+# so a packaged binary still runs where laszip is not installed.
 find_path(LASZIP_INCLUDE_DIR laszip/laszip_api.h)
 find_library(LASZIP_LIBRARY NAMES laszip laszip_api)
 if(LASZIP_INCLUDE_DIR AND LASZIP_LIBRARY)
   message(STATUS "laszip found: LAZ reading enabled")
   target_include_directories(punto-core PRIVATE ${LASZIP_INCLUDE_DIR})
-  target_link_libraries(punto-core PRIVATE ${LASZIP_LIBRARY})
+  target_link_libraries(punto-core PRIVATE ${CMAKE_DL_LIBS})
   target_compile_definitions(punto-core PRIVATE PUNTO_HAVE_LASZIP=1)
   set(PUNTO_LASZIP_FOUND TRUE)
 else()
@@ -240,6 +242,12 @@ set(CPACK_INSTALL_DEFAULT_DIRECTORY_PERMISSIONS
 # link, so it names the right library packages for whichever release the
 # .deb was built on and can never drift from the build.
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+# laszip is loaded at runtime, so shlibdeps cannot see it. Recommends, not
+# Depends: apt installs it by default where it exists, and the package
+# still installs where it does not.
+if(PUNTO_LASZIP_FOUND)
+  set(CPACK_DEBIAN_PACKAGE_RECOMMENDS liblaszip8)
+endif()
 include(CPack)
 
 # ---------------------------------------------------------------- tests
