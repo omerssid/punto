@@ -1,16 +1,17 @@
 # Punto
 
-> A GPU-driven point cloud viewer for large clouds. 
+> A fast, GPU-accelerated point cloud viewer for Linux, built for clouds of tens of millions of points.
 
-Reads PCD, PLY, LAS, LAZ and raw KITTI `.bin`. Viewing is what exists today, but processing is
-where this is going.
+Opens PCD, PLY, LAS, LAZ and KITTI `.bin` files, and keeps a ~90 M-point scan under a millisecond
+a frame by drawing only the points the screen can actually show. Viewing is complete today;
+processing tools come next.
 
-![The viewer with an 87M-point terrestrial laser scan open](docs/screenshot.png)
+![The viewer with a ~90M-point terrestrial laser scan open](docs/screenshot.png)
 
 ## Contents
 
 - [Why](#why) — how this differs from `pcl_viewer`
-- [Performance](#performance) — measured numbers on an 87 M-point scan
+- [Performance](#performance) — measured numbers on a ~90 M-point scan
 - [Installing](#installing) — the `.deb` for Ubuntu and Debian
 - [Building](#building) — dependencies and the cmake invocation
 - [Using it](#using-it) · [Controls](#controls)
@@ -40,7 +41,7 @@ punto is built the other way round:
 
 ## Performance
 
-Measured on an RTX 5060 Laptop GPU with an 86,976,981-point, 1.0 GB LAZ
+Measured on an RTX 5060 Laptop GPU with a ~90 M-point, 1.0 GB LAZ
 terrestrial scan (LAS 1.4 format 7: position, intensity, RGB and nine more
 fields), 28 worker threads, page cache warm. Loading and chunking are CPU
 work and do not depend on the GPU.
@@ -49,13 +50,13 @@ work and do not depend on the GPU.
 | --- | --- |
 | Open to first frame | **5.9 s** (4.6 s decompress · 1.3 s chunk · upload) |
 | Frame time @ 1920×1080 | **0.48 ms median, 2098 fps** (p95 0.60 ms) |
-| Points drawn at overview | ~850 k of 87.0 M (~1%) |
+| Points drawn at overview | ~850 k of ~90 M (~1%) |
 | VRAM | 1161 MB of 8151 |
 | Host RAM | 6.1 GB peak |
 
 The frame cost tracks screen area, not cloud size: a chunk 500 m away whose
 100,000 points land on 40 pixels is drawn with 40 points, because the other
-99,960 cannot be seen. That is why 87 M points here cost the same per frame
+99,960 cannot be seen. That is why ~90 M points here cost the same per frame
 as a third as many did — the screen did not get any bigger.
 
 Almost all of the open is LAZ decompression, which is CPU-bound and
