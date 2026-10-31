@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Point cloud types for the shared MIME database. LAS and LAZ use their
+     IANA registrations; PCD and PLY have none, so they get x- types. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-pcd">
+    <comment>PCD point cloud</comment>
+    <glob pattern="*.pcd"/>
+  </mime-type>
+  <mime-type type="application/x-ply">
+    <comment>PLY polygon or point cloud</comment>
+    <magic priority="50">
+      <match type="string" offset="0" value="ply"/>
+    </magic>
+    <glob pattern="*.ply"/>
+  </mime-type>
+  <mime-type type="application/vnd.las">
+    <comment>LAS lidar point cloud</comment>
+    <glob pattern="*.las"/>
+  </mime-type>
+  <mime-type type="application/vnd.laszip">
+    <comment>LAZ compressed lidar point cloud</comment>
+    <glob pattern="*.laz"/>
+  </mime-type>
+</mime-info>

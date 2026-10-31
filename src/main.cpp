@@ -50,6 +50,7 @@ void usage() {
       "  --drop-fields A,B         do not decode these scalar fields at all\n"
       "  --threads N               worker threads for loading\n"
       "  -v, --verbose             debug logging\n"
+      "  --version                 print the version and exit\n"
       "  -h, --help                this message\n"
       "\n"
       "controls:\n"
@@ -99,6 +100,7 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "-h" || arg == "--help") { usage(); return 0; }
+    if (arg == "--version") { std::printf("punto-viewer %s\n", PUNTO_VERSION); return 0; }
     if (arg == "-v" || arg == "--verbose") { punto::setLogLevel(punto::LogLevel::Debug); continue; }
     if (arg == "--no-vsync") { options.vsync = false; continue; }
     if (arg == "--keep-invalid") { options.loadOptions.dropInvalid = false; continue; }

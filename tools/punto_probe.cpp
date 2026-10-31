@@ -322,7 +322,8 @@ void usage() {
       "  --drop-fields A,B  do not decode these scalar fields at all\n"
       "  --chunks           build the chunk/LOD tree and report it\n"
       "  --chunk-size N     max points per chunk (default 131072)\n"
-      "  -v                 verbose timing\n");
+      "  -v                 verbose timing\n"
+      "  --version          print the version and exit\n");
 }
 
 }  // namespace
@@ -352,6 +353,7 @@ int main(int argc, char** argv) {
     }
     else if (arg == "-v") setLogLevel(LogLevel::Debug);
     else if (arg == "-h" || arg == "--help") { usage(); return 0; }
+    else if (arg == "--version") { std::printf("punto-probe %s\n", PUNTO_VERSION); return 0; }
     else if (!arg.empty() && arg[0] == '-') { std::printf("unknown option: %s\n", arg.c_str()); usage(); return 2; }
     else paths.push_back(arg);
   }

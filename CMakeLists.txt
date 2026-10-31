@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
-project(punto LANGUAGES CXX)
+project(punto VERSION 0.1.0 LANGUAGES CXX)
+
+include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,6 +19,11 @@ option(PUNTO_WERROR      "Treat warnings as errors" OFF)
 # build host, but libstdc++ comes from the compiler, so a newer GCC on an
 # older distribution otherwise produces something that runs nowhere.
 option(PUNTO_STATIC_CXX_RUNTIME "Link libstdc++ and libgcc statically" OFF)
+# Bake the source tree's shaders/ path into the binary so edits there are
+# picked up live. Off for anything distributed: an installed binary should
+# run its embedded shaders, not whatever happens to sit at the build
+# machine's path on the user's.
+option(PUNTO_DEV_SHADER_DIR "Live-reload shaders from the source tree" ON)
 
 # std::format is used throughout the logging and UI layers -- 32 call sites
 # -- and libstdc++ only shipped it in GCC 13. Fail here with a clear reason
@@ -44,6 +51,7 @@ target_compile_options(punto-flags INTERFACE
   $<$<AND:$<BOOL:${PUNTO_NATIVE_ARCH}>,$<CONFIG:Release>>:-march=native>
 )
 target_compile_features(punto-flags INTERFACE cxx_std_20)
+target_compile_definitions(punto-flags INTERFACE PUNTO_VERSION="${PROJECT_VERSION}")
 if(PUNTO_STATIC_CXX_RUNTIME)
   target_link_options(punto-flags INTERFACE -static-libstdc++ -static-libgcc)
 endif()
@@ -133,8 +141,10 @@ add_library(punto-gpu STATIC
 )
 target_link_libraries(punto-gpu PUBLIC punto-core GLEW::GLEW OpenGL::GL ${PUNTO_GLFW})
 # Lets ShaderLibrary pick up edits to shaders/ without a rebuild.
-target_compile_definitions(punto-gpu PRIVATE
-  PUNTO_SOURCE_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders")
+if(PUNTO_DEV_SHADER_DIR)
+  target_compile_definitions(punto-gpu PRIVATE
+    PUNTO_SOURCE_SHADER_DIR="${CMAKE_CURRENT_SOURCE_DIR}/shaders")
+endif()
 
 # XRandR lets the viewer see how displays are actually driven, so it can
 # avoid forcing render offload onto a reverse-PRIME setup where that makes
@@ -183,6 +193,16 @@ if(PUNTO_LASZIP_FOUND)
   target_include_directories(punto-make-laz PRIVATE ${LASZIP_INCLUDE_DIR})
   target_link_libraries(punto-make-laz PRIVATE ${LASZIP_LIBRARY} punto-flags)
 endif()
+
+# ---------------------------------------------------------------- install
+
+install(TARGETS punto-viewer punto-probe RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES packaging/punto.desktop
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES packaging/punto.svg
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+install(FILES packaging/punto.xml
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/mime/packages)
 
 # ---------------------------------------------------------------- tests
 

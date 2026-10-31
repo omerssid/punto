@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Punto
+GenericName=Point Cloud Viewer
+Comment=View PCD, PLY, LAS and LAZ point clouds
+Exec=punto-viewer %F
+Icon=punto
+Terminal=false
+Categories=Graphics;3DGraphics;Viewer;
+MimeType=application/x-pcd;application/x-ply;application/vnd.las;application/vnd.laszip;
+Keywords=point cloud;lidar;pcd;ply;las;laz;
