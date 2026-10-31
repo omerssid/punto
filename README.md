@@ -1,4 +1,4 @@
-# <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icon-dark.svg"><img src="docs/icon-light.svg" alt="" height="36"></picture> punto
+# Punto
 
 > A GPU-driven point cloud viewer for large clouds. 
 
