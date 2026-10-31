@@ -1,4 +1,4 @@
-# punto
+# <picture><source media="(prefers-color-scheme: dark)" srcset="docs/icon-dark.svg"><img src="docs/icon-light.svg" alt="" height="36"></picture> punto
 
 > A GPU-driven point cloud viewer for large clouds. 
 
@@ -289,7 +289,7 @@ When a file genuinely will not fit, two flags make it open anyway:
 | `--drop-fields A,B` | Leave named scalar fields undecoded and uncolumned. Positions and colour are never dropped. |
 
 Dropping has to happen before the decode: a column freed afterwards has
-already cost the peak you could not afford. On the 87M-point scan above,
+already cost the peak you could not afford. On the ~90M-point scan above,
 GPS time alone is 8 bytes a point, and five more fields are constant zero.
 
 ```
