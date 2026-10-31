@@ -204,6 +204,38 @@ install(FILES packaging/punto.svg
 install(FILES packaging/punto.xml
   DESTINATION ${CMAKE_INSTALL_DATADIR}/mime/packages)
 
+# `cpack` in the build directory turns the install tree above into a .deb.
+# No maintainer scripts: the MIME database, icon cache and desktop database
+# all refresh through dpkg triggers owned by the packages that maintain
+# them.
+set(CPACK_GENERATOR DEB)
+set(CPACK_PACKAGE_NAME punto)
+set(CPACK_PACKAGE_VENDOR "Omer Sayed")
+set(CPACK_PACKAGE_CONTACT "Omer Sayed <omarh9323@gmail.com>")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "GPU point cloud viewer for PCD, PLY, LAS and LAZ")
+# One string, not several arguments: separate arguments would make a CMake
+# list and leave a ';' at the start of every line of the control file.
+set(CPACK_PACKAGE_DESCRIPTION "\
+Punto opens point clouds of tens of millions of points and renders them
+with level of detail and eye-dome lighting. It reads PCD (ASCII, binary
+and compressed), PLY, LAS, LAZ and KITTI .bin files.
+
+Includes punto-probe, a command-line tool that reports a file's fields,
+bounds and the memory it would need to open.")
+set(CPACK_DEBIAN_PACKAGE_SECTION graphics)
+set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/omerssid/punto")
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+set(CPACK_STRIP_FILES ON)
+# Otherwise directories take the build machine's umask.
+set(CPACK_INSTALL_DEFAULT_DIRECTORY_PERMISSIONS
+  OWNER_READ OWNER_WRITE OWNER_EXECUTE
+  GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+# Depends: is worked out by dpkg-shlibdeps from what the binaries actually
+# link, so it names the right library packages for whichever release the
+# .deb was built on and can never drift from the build.
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+include(CPack)
+
 # ---------------------------------------------------------------- tests
 
 enable_testing()

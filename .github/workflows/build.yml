@@ -28,6 +28,8 @@ env:
     -DPUNTO_NATIVE_ARCH=OFF
     -DPUNTO_WERROR=ON
     -DPUNTO_STATIC_CXX_RUNTIME=ON
+    -DPUNTO_DEV_SHADER_DIR=OFF
+    -DCMAKE_INSTALL_PREFIX=/usr
 
 jobs:
   build:
@@ -37,6 +39,8 @@ jobs:
     # on 22.04 (glibc 2.35) covers 22.04 and 24.04, while building on 24.04
     # would not run on 22.04.
     runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.package.outputs.version }}
 
     steps:
       - uses: actions/checkout@v4
@@ -107,95 +111,134 @@ jobs:
       - name: Package
         id: package
         run: |
-          # checkout is shallow and fetches no tags, so git describe would
-          # always fall back to a hash. The ref name is the tag when one is
-          # being built, so use that and the short hash otherwise.
+          set -euo pipefail
+          project_version="$(./build/punto-viewer --version | cut -d' ' -f2)"
+
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            version="${GITHUB_REF_NAME}"
+            # A tag that disagrees with project() would publish a .deb
+            # whose version is not the one on the release page.
+            if [[ "${GITHUB_REF_NAME}" != "v${project_version}" ]]; then
+              echo "::error::tag ${GITHUB_REF_NAME} does not match project version ${project_version}"
+              exit 1
+            fi
+            deb_version="${project_version}"
           else
-            version="$(git rev-parse --short HEAD)"
+            # '~' sorts before the release itself, so a snapshot of what
+            # will become 0.2.0 upgrades cleanly to 0.2.0. The date keeps
+            # snapshots in order, which a hash alone would not.
+            # checkout is shallow, but HEAD's own date is always there.
+            deb_version="${project_version}~git$(git log -1 --format=%cd --date=format:%Y%m%d).$(git rev-parse --short HEAD)"
           fi
-          name="punto-${version}-linux-x86_64"
-          echo "name=${name}" >> "$GITHUB_OUTPUT"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
-          mkdir -p "dist/${name}"
-          cp build/punto-viewer build/punto-probe "dist/${name}/"
-          cp README.md LICENSE "dist/${name}/"
-          strip "dist/${name}/punto-viewer" "dist/${name}/punto-probe"
+          (cd build && cpack -D CPACK_DEBIAN_PACKAGE_VERSION="${deb_version}")
+          deb="$(ls build/punto_*.deb)"
+          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
+            # GitHub rewrites '~' in asset names, which would break the
+            # install line in the notes. A fixed name also gives the
+            # snapshot a stable download URL; dpkg reads the version from
+            # the control file, never the filename.
+            mv "${deb}" build/punto_latest_amd64.deb
+            deb=build/punto_latest_amd64.deb
+          fi
+          sha256sum "${deb}" | sed 's|build/||' > "${deb}.sha256"
+          dpkg-deb --info "${deb}"
 
-          # The binaries link against the system GL, GLFW, GLEW and laszip,
-          # so say exactly what a machine needs to run them.
-          cat > "dist/${name}/INSTALL.txt" <<'EOF'
-          punto -- Linux x86_64
-
-          Built on Ubuntu 22.04 (glibc 2.35) with GCC 13 and a statically
-          linked C++ runtime, so it needs no libstdc++ of its own. Runs on
-          Ubuntu 22.04 or newer, and on other distributions with a
-          comparable glibc.
-
-          Runtime dependencies:
-
-            sudo apt install libglfw3 libglew2.2 libgl1 libxrandr2 liblaszip8
-
-          liblaszip8 is only needed to open .laz files; everything else works
-          without it.
-
-          Then:
-
-            ./punto-viewer your_cloud.pcd
-
-          These binaries are built without -march=native, so they run on any
-          x86-64 CPU. Building from source with the default settings produces
-          a faster binary tuned to your own machine.
-          EOF
-
-          tar -czf "${name}.tar.gz" -C dist "${name}"
-          sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256"
-          ls -la "${name}.tar.gz"
+          echo "deb=${deb}" >> "$GITHUB_OUTPUT"
+          echo "version=${deb_version}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.package.outputs.name }}
+          name: deb
           path: |
-            ${{ steps.package.outputs.name }}.tar.gz
-            ${{ steps.package.outputs.name }}.tar.gz.sha256
+            ${{ steps.package.outputs.deb }}
+            ${{ steps.package.outputs.deb }}.sha256
+            tests/fixtures/helix_12_fmt3.laz
           retention-days: 30
+
+  install-test:
+    name: install on ${{ matrix.image }}
+    # The .deb's Depends line names packages as they exist on 22.04. Each
+    # release below has to resolve all of them from its own archive, and
+    # nothing short of a clean install proves that it does.
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['ubuntu:22.04', 'ubuntu:24.04', 'debian:12', 'debian:13']
+    container: ${{ matrix.image }}
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb
+
+      - name: Install
+        run: |
+          apt-get update
+          apt-get install -y ./build/punto_*.deb
+
+      - name: Check it runs
+        run: |
+          set -eu
+          # A library apt could not supply would show up here, not in apt.
+          if ldd /usr/bin/punto-viewer | grep "not found"; then exit 1; fi
+          punto-viewer --version
+          punto-probe tests/fixtures/helix_12_fmt3.laz > /dev/null
+          test -f /usr/share/applications/punto.desktop
+          test -f /usr/share/icons/hicolor/scalable/apps/punto.svg
+          test -f /usr/share/mime/packages/punto.xml
+
+      - name: Remove
+        run: |
+          apt-get remove -y punto
+          test ! -e /usr/bin/punto-viewer
+
+  publish:
+    name: publish
+    # Only after every install test passes, so a release never carries a
+    # package that is broken somewhere it claims to support.
+    needs: [build, install-test]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb
 
       - name: Publish rolling build
         # Every push to the default branch replaces a single prerelease, so
-        # there is always a current binary to download without tagging.
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        # there is always a current package to download without tagging.
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
+          deb="$(ls build/punto_*.deb)"
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
           gh release create latest \
-            --title "Latest build (${{ steps.package.outputs.version }})" \
-            --notes "Automatic build of \`${{ github.sha }}\`.
-
-          Built on Ubuntu 22.04, without \`-march=native\`, so it runs on any x86-64 CPU.
+            --title "Latest build (${{ needs.build.outputs.version }})" \
+            --notes "Automatic build of \`${{ github.sha }}\`. For Ubuntu 22.04+ and Debian 12+, x86-64:
 
           \`\`\`
-          sudo apt install libglfw3 libglew2.2 libgl1 libxrandr2 liblaszip8
-          \`\`\`
-
-          See \`INSTALL.txt\` in the archive." \
+          sudo apt install ./$(basename "${deb}")
+          \`\`\`" \
             --prerelease \
             --target "${{ github.sha }}" \
-            "${{ steps.package.outputs.name }}.tar.gz" \
-            "${{ steps.package.outputs.name }}.tar.gz.sha256"
+            "${deb}" "${deb}.sha256"
 
       - name: Publish tagged release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
+          deb="$(ls build/punto_*.deb)"
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
             --generate-notes \
-            "${{ steps.package.outputs.name }}.tar.gz" \
-            "${{ steps.package.outputs.name }}.tar.gz.sha256"
+            "${deb}" "${deb}.sha256"
 
   build-minimal:
     name: build without optional dependencies
