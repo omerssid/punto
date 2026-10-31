@@ -11,6 +11,7 @@ where this is going.
 
 - [Why](#why) — how this differs from `pcl_viewer`
 - [Performance](#performance) — measured numbers on an 87 M-point scan
+- [Installing](#installing) — the `.deb` for Ubuntu and Debian
 - [Building](#building) — dependencies and the cmake invocation
 - [Using it](#using-it) · [Controls](#controls)
 - [Formats](#formats) — PCD, PLY, LAS, LAZ, raw `.bin`
@@ -67,6 +68,24 @@ The same scene on the integrated GPU runs at 10.5 ms, 95 fps — still
 interactive, because LOD has already capped the work at roughly what the
 screen can show. See *Hybrid graphics* below for when that path gets used.
 
+## Installing
+
+Ubuntu 22.04 or newer and Debian 12 or newer, on x86-64: download the
+`.deb` from the [releases page](https://github.com/omerssid/punto/releases)
+and install it with apt, which pulls in the libraries it needs:
+
+```sh
+sudo apt install ./punto_0.1.0_amd64.deb
+```
+
+This installs `punto-viewer` and `punto-probe`, an entry in the
+application menu, and file associations for `.pcd`, `.ply`, `.las` and
+`.laz`. `sudo apt remove punto` takes it all out again.
+
+The packaged binary is built without `-march=native` so it runs on any
+x86-64 CPU. Building from source gives one tuned to your own machine,
+which is faster on the load path.
+
 ## Building
 
 Needs **GCC 13 or newer**, CMake 3.20+ and OpenGL 4.6. `std::format` is used
@@ -89,6 +108,9 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
+`sudo cmake --install build` puts it under `/usr/local`, and `cpack` in
+the build directory makes a `.deb` instead.
+
 Dear ImGui is vendored, so there is nothing else to fetch. Both optional
 dependencies are detected at configure time and the build reports what it
 found. Shaders are embedded into the binary, which is a single ~2 MB file.
@@ -97,6 +119,7 @@ found. Shaders are embedded into the binary, which is a single ~2 MB file.
 | --- | --- | --- |
 | `PUNTO_NATIVE_ARCH` | `ON` | `-march=native`. **Turn off for binaries you distribute** — otherwise they crash on older CPUs. |
 | `PUNTO_WERROR` | `OFF` | warnings as errors |
+| `PUNTO_DEV_SHADER_DIR` | `ON` | compiles in the source tree's `shaders/` path so `R` reloads edits from it. Turn off for anything you distribute, so installed binaries always use their embedded shaders. |
 | `PUNTO_STATIC_CXX_RUNTIME` | `OFF` | links libstdc++ and libgcc statically. For binaries built on an older distribution to run on newer ones: the glibc requirement comes from the build host, but libstdc++ comes from the compiler, so a GCC 13 binary built on 22.04 otherwise demands a libstdc++ that 22.04 does not have. |
 
 Two environment variables are read at runtime: `PUNTO_THREADS` caps worker
@@ -343,16 +366,32 @@ Fixtures requiring PCL or laszip are skipped when those are absent.
 
 ## Releases
 
-`.github/workflows/build.yml` builds, tests and packages on every push.
-Pushing to the default branch replaces a rolling `latest` prerelease;
-pushing a `v*` tag cuts a permanent one. Both attach a tarball of the two
-binaries with a SHA-256 sum.
+`.github/workflows/build.yml` builds, tests and packages a `.deb` on every
+push, then installs that package in clean Ubuntu 22.04, Ubuntu 24.04,
+Debian 12 and Debian 13 containers and checks that it runs and removes
+cleanly. Only when all four pass does it publish. A push to the default
+branch replaces a rolling `latest` prerelease carrying
+`punto_latest_amd64.deb`, and a `v*` tag cuts a permanent release.
 
 Release builds set `-DPUNTO_NATIVE_ARCH=OFF` and run on Ubuntu 22.04. Both
 matter: `-march=native` would bake in whatever instructions the build
 machine happens to have, and a binary runs on the glibc it was built
 against or newer, so building on 22.04 covers 22.04 and 24.04 while
 building on 24.04 would not run on 22.04.
+
+The version lives in one place, `project(punto VERSION …)` in
+`CMakeLists.txt`, and a tag that disagrees with it fails the build. To cut
+a release:
+
+1. Set the version in `CMakeLists.txt` and commit.
+2. `git tag v0.1.0 && git push origin main v0.1.0`
+3. Bump the version to the next one (say `0.2.0`) and commit.
+
+Step 3 matters for the rolling build. Snapshots are versioned
+`<version>~git<date>.<hash>`, and `~` sorts *before* the plain version, so
+`0.2.0~git…` upgrades cleanly to `0.2.0` once it ships. Skipping the bump
+would leave snapshots versioned `0.1.0~git…`, which apt considers older
+than the `0.1.0` already released.
 
 A second job builds without `laszip` or `Xrandr` and runs the suite again,
 because those sit behind compile-time checks and are otherwise never
