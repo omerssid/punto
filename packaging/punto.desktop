@@ -5,6 +5,7 @@ GenericName=Point Cloud Viewer
 Comment=View PCD, PLY, LAS and LAZ point clouds
 Exec=punto-viewer %F
 Icon=punto
+StartupWMClass=punto
 Terminal=false
 Categories=Graphics;3DGraphics;Viewer;
 MimeType=application/x-pcd;application/x-ply;application/vnd.las;application/vnd.laszip;

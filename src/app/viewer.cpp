@@ -57,6 +57,13 @@ bool Viewer::createWindow(const ViewerOptions& options, const PrimeTopology& top
   // Screenshot and benchmark runs need no visible window.
   const bool headless = !options.screenshotPath.empty();
   if (headless) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+  // Desktops find a running window's icon by matching this against
+  // punto.desktop. GLFW would otherwise derive it from the title.
+  glfwWindowHintString(GLFW_X11_CLASS_NAME, "punto");
+  glfwWindowHintString(GLFW_X11_INSTANCE_NAME, "punto");
+#ifdef GLFW_WAYLAND_APP_ID
+  glfwWindowHintString(GLFW_WAYLAND_APP_ID, "punto");
+#endif
 
   window_ = glfwCreateWindow(options.width, options.height, "punto", nullptr, nullptr);
   if (window_ == nullptr) {
